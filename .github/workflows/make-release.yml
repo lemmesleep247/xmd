@@ -1,0 +1,208 @@
+name: Make release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Tag to release (for example v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-for-github:
+    name: Release for GitHub
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Resolve and validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version_tag="${GITHUB_REF#refs/tags/}"
+          else
+            version_tag="${{ inputs.tag_name }}"
+          fi
+
+          if [[ ! "$version_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid stable release tag: $version_tag"
+            exit 1
+          fi
+
+          echo "VERSION_TAG=$version_tag" >> "$GITHUB_ENV"
+          echo "Release tag: $version_tag"
+
+      - name: Create release tag if it does not exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          # Tags triggered by a push already exist.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Workflow was triggered by existing tag: $VERSION_TAG"
+            exit 0
+          fi
+
+          # Manual workflow dispatch.
+          if git rev-parse -q --verify "refs/tags/$VERSION_TAG" >/dev/null; then
+            echo "Tag $VERSION_TAG already exists."
+            echo "Checking out the existing tag..."
+            git checkout --detach "$VERSION_TAG"
+            exit 0
+          fi
+
+          echo "Tag $VERSION_TAG does not exist."
+          echo "Creating it at the current commit..."
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$VERSION_TAG"
+          git push origin "$VERSION_TAG"
+
+          echo "Created and pushed tag $VERSION_TAG"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build unsigned release APK
+        shell: bash
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Sign and verify release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          apksigner="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+
+          if [[ -z "${{ secrets.KEYSTORE_BASE64 }}" || -z "${{ secrets.KEY_ALIAS }}" || -z "${{ secrets.KEYSTORE_PASSWORD }}" || -z "${{ secrets.KEY_PASSWORD }}" ]]; then
+            echo "Stable releases require all signing secrets."
+            exit 1
+          fi
+
+          test -x "$apksigner"
+
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          trap 'rm -f release.jks' EXIT
+
+          mkdir -p app/build/outputs/apk/signed
+
+          # Each flavor (lite = no YouTube, full = adds yt-dlp) splits into
+          # its own arm64-v8a and armeabi-v7a APK -- 4 total, each with only
+          # its own ABI's native libs.
+          declare -A wanted=(
+            [Xmd-lite-arm64-v8a]="app/build/outputs/apk/lite/release/*arm64-v8a*-unsigned.apk"
+            [Xmd-lite-armeabi-v7a]="app/build/outputs/apk/lite/release/*armeabi-v7a*-unsigned.apk"
+            [Xmd-full-arm64-v8a]="app/build/outputs/apk/full/release/*arm64-v8a*-unsigned.apk"
+            [Xmd-full-armeabi-v7a]="app/build/outputs/apk/full/release/*armeabi-v7a*-unsigned.apk"
+          )
+
+          for label in "${!wanted[@]}"; do
+            unsigned=$(compgen -G "${wanted[$label]}" | head -n1 || true)
+
+            if [[ -z "$unsigned" ]]; then
+              echo "Missing expected unsigned APK for $label (pattern: ${wanted[$label]})"
+              find app/build/outputs/apk -type f -name '*.apk' -print || true
+              exit 1
+            fi
+
+            signed="app/build/outputs/apk/signed/$label.apk"
+
+            "$apksigner" sign \
+              --ks release.jks \
+              --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+              --ks-pass "pass:${{ secrets.KEYSTORE_PASSWORD }}" \
+              --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+              --out "$signed" \
+              "$unsigned"
+
+            "$apksigner" verify --verbose "$signed"
+          done
+
+      - name: Stage release assets and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release-assets
+          : > checksums.txt
+
+          for src in app/build/outputs/apk/signed/*.apk; do
+            label="$(basename "$src" .apk)"
+            dst="release-assets/${label}-${VERSION_TAG}.apk"
+
+            cp "$src" "$dst"
+            sha256sum "$dst" | tee -a checksums.txt
+          done
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          changelog = Path('CHANGELOG.md').read_text(encoding='utf-8').splitlines()
+
+          section = []
+          in_latest = False
+
+          for line in changelog:
+              if line.startswith('## '):
+                  if in_latest:
+                      break
+                  in_latest = True
+
+              if in_latest:
+                  section.append(line)
+
+          latest = '\n'.join(section).strip()
+
+          if not latest:
+              raise SystemExit('Could not find latest changelog section')
+
+          Path('release-notes.md').write_text(
+              latest + '\n\n---\n### SHA-256 checksum\n\n```text\n',
+              encoding='utf-8'
+          )
+          PY
+
+          cat checksums.txt >> release-notes.md
+          printf '%s\n' '```' >> release-notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION_TAG }}
+          name: Xmd ${{ env.VERSION_TAG }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: release-assets/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
