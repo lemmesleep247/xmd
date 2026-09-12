@@ -290,7 +290,10 @@ class SettingsActivity : ComponentActivity() {
                                     onExportWebsites = onExportWebsites,
                                 )
                                 Route.YOUTUBE -> YoutubeRoute()
-                                Route.ABOUT -> AboutRoute()
+                                Route.ABOUT -> AboutRoute(
+                                    onLibrariesClick = { selectedRoute = Route.LIBRARIES },
+                                )
+                                Route.LIBRARIES -> LibrariesRoute()
                                 else -> AppearanceRoute()
                             }
                         }
@@ -343,7 +346,12 @@ class SettingsActivity : ComponentActivity() {
                             BrowserRoute(onImportWebsites = onImportWebsites, onExportWebsites = onExportWebsites)
                         }
                         composable(Route.YOUTUBE) { YoutubeRoute() }
-                        composable(Route.ABOUT) { AboutRoute() }
+                        composable(Route.ABOUT) {
+                            AboutRoute(
+                                onLibrariesClick = { navController.navigate(Route.LIBRARIES) },
+                            )
+                        }
+                        composable(Route.LIBRARIES) { LibrariesRoute() }
                     }
                 }
             }
@@ -463,6 +471,7 @@ internal object Route {
     const val BROWSER = "browser"
     const val YOUTUBE = "youtube"
     const val ABOUT = "about"
+    const val LIBRARIES = "libraries"
 }
 
 /** Route -> header title, replaces the old syncHeaderTitle()'s Fragment-type switch. */
@@ -473,6 +482,7 @@ internal val routeTitles: Map<String, Int> = mapOf(
     Route.DOWNLOADS to R.string.settings_category_downloads,
     Route.YOUTUBE to R.string.settings_category_youtube,
     Route.ABOUT to R.string.settings_category_about,
+    Route.LIBRARIES to R.string.about_libraries_title,
 )
 
 // ── Route bodies ──────────────────────────────────────────────────────────
@@ -608,6 +618,15 @@ private fun DownloadsRoute() {
     var wifiOnly by remember {
         mutableStateOf(com.invictus.xmd.preferences.Settings.wifiOnlyDownloads())
     }
+    var dataLimitEnabled by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.dataLimitEnabled())
+    }
+    var dataLimitBytes by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.dataLimitBytes())
+    }
+    var dataLimitScope by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.dataLimitScope())
+    }
 
     // Same SAF folder-picker flow as the per-download "Change" button in
     // AddDownloadDialog/AddTorrentDialog (MainActivity's pickSaveDirLauncher) --
@@ -630,6 +649,9 @@ private fun DownloadsRoute() {
         defaultLocationPath = defaultLocationPath,
         categorizeIntoFolders = categorizeIntoFolders,
         wifiOnly = wifiOnly,
+        dataLimitEnabled = dataLimitEnabled,
+        dataLimitBytes = dataLimitBytes,
+        dataLimitScope = dataLimitScope,
         onAutoRetryChanged = { checked ->
             autoRetry = checked
             com.invictus.xmd.preferences.Settings.setAutoRetryEnabled(checked)
@@ -653,6 +675,18 @@ private fun DownloadsRoute() {
                 com.invictus.xmd.service.DownloadService.pauseForWifiOnly(context)
             }
         },
+        onDataLimitEnabledChanged = { checked ->
+            dataLimitEnabled = checked
+            com.invictus.xmd.preferences.Settings.setDataLimitEnabled(checked)
+        },
+        onDataLimitBytesChanged = { bytes ->
+            dataLimitBytes = bytes
+            com.invictus.xmd.preferences.Settings.setDataLimitBytes(bytes)
+        },
+        onDataLimitScopeChanged = { scope ->
+            dataLimitScope = scope
+            com.invictus.xmd.preferences.Settings.setDataLimitScope(scope)
+        },
     )
 }
 
@@ -669,6 +703,17 @@ private fun BrowserRoute(onImportWebsites: () -> Unit, onExportWebsites: () -> U
         mutableStateOf(com.invictus.xmd.preferences.Settings.customSearchName())
     }
     var showSearchEngineDialog by remember { mutableStateOf(false) }
+
+    var homePage by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.homePage())
+    }
+    var customHomeUrl by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.customHomeUrl())
+    }
+    var customHomeName by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.customHomeName())
+    }
+    var showHomePageDialog by remember { mutableStateOf(false) }
 
     var adblockLevel by remember {
         mutableStateOf(com.invictus.xmd.preferences.Settings.adblockLevel())
@@ -723,10 +768,34 @@ private fun BrowserRoute(onImportWebsites: () -> Unit, onExportWebsites: () -> U
         )
     }
 
+    if (showHomePageDialog) {
+        HomePageDialog(
+            currentPage = homePage,
+            currentCustomUrl = customHomeUrl,
+            currentCustomName = customHomeName,
+            onDismiss = { showHomePageDialog = false },
+            onSave = { page, customUrl, customName ->
+                homePage = page
+                customHomeUrl = customUrl
+                customHomeName = customName
+                com.invictus.xmd.preferences.Settings.setHomePage(page)
+                com.invictus.xmd.preferences.Settings.setCustomHomeUrl(customUrl)
+                com.invictus.xmd.preferences.Settings.setCustomHomeName(customName)
+                showHomePageDialog = false
+            },
+            onInvalidCustomUrl = {
+                android.widget.Toast.makeText(context, R.string.home_page_invalid_url, android.widget.Toast.LENGTH_SHORT).show()
+            },
+        )
+    }
+
     SettingsBrowserScreen(
         searchEngine = searchEngine,
         customSearchName = customSearchName,
         onSearchEngineClick = { showSearchEngineDialog = true },
+        homePage = homePage,
+        customHomeName = customHomeName,
+        onHomePageClick = { showHomePageDialog = true },
         adblockLevel = adblockLevel,
         blockedDomainCount = blockedDomainCount,
         lifetimeBlockedCount = lifetimeBlockedCount,
@@ -929,10 +998,11 @@ private fun YoutubeRoute() {
 }
 
 @Composable
-private fun AboutRoute() {
+private fun AboutRoute(onLibrariesClick: () -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var autoCheckForUpdates by remember { mutableStateOf(Settings.autoCheckForUpdatesEnabled()) }
+    var updateChannel by remember { mutableStateOf(Settings.updateChannel()) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
     var updateAvailability by remember {
         mutableStateOf<UpdateAvailability>(
@@ -963,6 +1033,7 @@ private fun AboutRoute() {
                         Result.success(
                             com.invictus.xmd.domain.update.UpdateChecker.checkForUpdate(
                                 com.invictus.xmd.BuildConfig.VERSION_NAME,
+                                updateChannel,
                             ),
                         )
                     } catch (e: com.invictus.xmd.domain.update.UpdateChecker.CheckFailedException) {
@@ -1064,7 +1135,53 @@ private fun AboutRoute() {
         AboutDeveloper("Arnab Sadhukhan", "Arnab11"),
         AboutDeveloper("Ritesh Pandit", "Riteshp2001"),
     )
-    val credits = buildList {
+
+    AboutScreen(
+        versionText = stringResource(R.string.about_version_format, com.invictus.xmd.BuildConfig.VERSION_NAME),
+        onGithubClick = {
+            val url = context.getString(R.string.about_github_url)
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        },
+        onLibrariesClick = onLibrariesClick,
+        developers = developers,
+        onDeveloperClick = { developer ->
+            val url = "https://github.com/${developer.githubId}"
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        },
+        autoCheckForUpdates = autoCheckForUpdates,
+        onAutoCheckForUpdatesChanged = { enabled ->
+            autoCheckForUpdates = enabled
+            Settings.setAutoCheckForUpdatesEnabled(enabled)
+        },
+        updateChannel = updateChannel,
+        onUpdateChannelChanged = { channel ->
+            updateChannel = channel
+            Settings.setUpdateChannel(channel)
+            // Any in-progress/found update was resolved against the old
+            // channel -- clear it so a leftover "Download"/"Install" card
+            // (and its cached release+asset) can't point at the wrong
+            // channel's build after switching.
+            pendingRelease = null
+            pendingAsset = null
+            updateAvailability = UpdateAvailability.Idle
+        },
+        isCheckingForUpdate = isCheckingForUpdate,
+        onCheckForUpdateClick = { checkForUpdate() },
+        updateAvailability = updateAvailability,
+        onDownloadUpdateClick = { downloadUpdate() },
+        onInstallUpdateClick = { installUpdate() },
+    )
+}
+
+/**
+ * The open-source libraries Xmd is built on -- split out of AboutRoute so
+ * it can be its own NavHost destination (see [LibrariesScreen]), reached
+ * via About's "Libraries" action button instead of scrolling to an inline
+ * section.
+ */
+@Composable
+private fun LibrariesRoute() {
+    val libraries = buildList {
         add("libtorrent4j" to stringResource(R.string.about_credit_libtorrent_desc))
         if (com.invictus.xmd.BuildConfig.HAS_YOUTUBE_SUPPORT) {
             add("yt-dlp (youtubedl-android)" to stringResource(R.string.about_credit_ytdlp_desc))
@@ -1075,27 +1192,5 @@ private fun AboutRoute() {
         add("Kotlin Coroutines" to stringResource(R.string.about_credit_coroutines_desc))
     }
 
-    AboutScreen(
-        versionText = stringResource(R.string.about_version_format, com.invictus.xmd.BuildConfig.VERSION_NAME),
-        onGithubClick = {
-            val url = context.getString(R.string.about_github_url)
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        },
-        developers = developers,
-        credits = credits,
-        onDeveloperClick = { developer ->
-            val url = "https://github.com/${developer.githubId}"
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        },
-        autoCheckForUpdates = autoCheckForUpdates,
-        onAutoCheckForUpdatesChanged = { enabled ->
-            autoCheckForUpdates = enabled
-            Settings.setAutoCheckForUpdatesEnabled(enabled)
-        },
-        isCheckingForUpdate = isCheckingForUpdate,
-        onCheckForUpdateClick = { checkForUpdate() },
-        updateAvailability = updateAvailability,
-        onDownloadUpdateClick = { downloadUpdate() },
-        onInstallUpdateClick = { installUpdate() },
-    )
+    LibrariesScreen(libraries = libraries)
 }

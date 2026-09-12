@@ -27,6 +27,7 @@ typealias LogFn = (String) -> Unit
 private const val STREAM_BLOCK_SIZE = 1024 * 1024
 private const val MULTI_CONNECTION_MIN_BYTES = 4L * 1024 * 1024
 private const val PROGRESS_THROTTLE_NANOS = 200_000_000L // ~5 UI updates/sec
+private val EXPIRED_LINK_CODES = setOf(401, 403, 404, 410)
 
 class DownloadEngine(
     private val client: OkHttpClient,
@@ -338,7 +339,7 @@ class DownloadEngine(
         val resumable = readPersistedMultiState(destination)
         if (resumable != null) {
             log("Resuming ${destination.name}: ${resumable.segments.sumOf { it.done }}/${resumable.total} bytes across ${resumable.segments.size} connections")
-            downloadMulti(url, destination, resumable.total, resumable.segments)
+            downloadMultiWithFallback(url, destination, resumable.total, resumable.segments)
             return
         }
         if (metaFile(destination).isFile) {
@@ -371,7 +372,7 @@ class DownloadEngine(
                 }
                 try {
                     log("Downloading with $connections parallel connections")
-                    downloadMulti(url, destination, probe.totalSize, freshSegments)
+                    downloadMultiWithFallback(url, destination, probe.totalSize, freshSegments)
                     return
                 } catch (e: DownloadCancelledException) {
                     throw e
@@ -438,7 +439,41 @@ class DownloadEngine(
      * download -- that was a second, separate way a corrupted file could
      * previously get marked DONE.
      */
-    private fun downloadMulti(url: String, destination: File, totalSize: Long, segments: List<SegmentState>) {
+    /**
+     * Runs [downloadMulti] at full parallelism, but doesn't automatically
+     * trust a 401/403/404/410 as a genuinely dead link. Hosts like pixeldrain
+     * cap how many simultaneous connections a free/anonymous download may
+     * use -- going over that cap 403s the extra segments even though the URL
+     * itself is perfectly valid, which used to surface as the same "Link
+     * Expired" dialog a real expired token gets, and Retry kept re-running
+     * the same N parallel segments into the same wall every time. On that
+     * error, drop to ONE connection and retry the exact same URL for
+     * whatever's left before believing the link is actually dead -- if a
+     * single connection also gets rejected, it really is expired/unavailable
+     * and the caller's Link Expired handling is correct to kick in.
+     */
+    private fun downloadMultiWithFallback(url: String, destination: File, totalSize: Long, segments: List<SegmentState>) {
+        try {
+            downloadMulti(url, destination, totalSize, segments)
+        } catch (e: ExpiredLinkException) {
+            log("Segment failed with HTTP ${e.httpCode} -- retrying remaining bytes on a single connection in case it's a per-connection limit rather than a dead link")
+            cancelled.set(false)
+            downloadMulti(url, destination, totalSize, segments, maxConcurrent = 1)
+        }
+    }
+
+    private fun downloadMulti(
+        url: String,
+        destination: File,
+        totalSize: Long,
+        segments: List<SegmentState>,
+        // Caps how many segments run at once. Defaults to "all of them" (the
+        // normal parallel case); [downloadMultiWithFallback] passes 1 to
+        // retry sequentially after a per-connection-limit host rejects true
+        // parallelism. A fixed-size pool smaller than `pending.size` just
+        // queues the rest, so this needs no other change to the run loop.
+        maxConcurrent: Int = segments.size
+    ) {
         destination.parentFile?.mkdirs()
         RandomAccessFile(destination, "rw").use { it.setLength(totalSize) }
 
@@ -465,7 +500,7 @@ class DownloadEngine(
         // same sliding window — gives the true aggregate download speed.
         val speedMeter = SpeedMeter()
         val failure    = AtomicReference<Exception?>(null)
-        val executor   = Executors.newFixedThreadPool(pending.size)
+        val executor   = Executors.newFixedThreadPool(maxConcurrent.coerceIn(1, pending.size))
 
         try {
             val futures = pending.map { seg ->
@@ -516,6 +551,15 @@ class DownloadEngine(
         try {
             call.execute().use { response ->
                 if (response.code != 206 && response.code != 200) {
+                    // Same tokenized/time-limited link expiry a single-connection
+                    // download can hit mid-file (see EXPIRED_LINK_CODES in
+                    // download() below) -- a multi-connection segment is just as
+                    // likely to land on a dead token once it expires partway
+                    // through a large file (pixeldrain and similar hosts sign
+                    // each byte-range request), so it gets the same IDM-style
+                    // "Fetch Link" recovery instead of a dead-end "Segment X-Y
+                    // failed" error the user can't do anything about.
+                    if (response.code in EXPIRED_LINK_CODES) throw ExpiredLinkException(response.code)
                     throw RuntimeException("Segment ${seg.start}-${seg.end} failed (HTTP ${response.code})")
                 }
                 val body = response.body ?: throw RuntimeException("Empty segment body")
@@ -604,13 +648,15 @@ class DownloadEngine(
                         streamToFile(response, destination, 0L, totalSize, append = false)
                     }
                     else -> {
-                        val host = runCatching { URI(url).host }.getOrNull()
-                        if (host == "dl.fuckingfast.co" && response.code in setOf(401, 403, 404, 410)) {
-                            throw RuntimeException(
-                                "This direct link has expired or is unavailable. Paste the original " +
-                                "share link to prepare a fresh download URL."
-                            )
-                        }
+                        // Any tokenized/time-limited direct link -- not just
+                        // FuckingFast's -- can come back with one of these once
+                        // its token expires or the CDN drops it. Generalized
+                        // from the old dl.fuckingfast.co-only check so every
+                        // site's expired link gets the same IDM-style "Fetch
+                        // Link" recovery (re-resolve for share links, re-fetch
+                        // from the source page for a plain direct URL) instead
+                        // of just failing outright.
+                        if (response.code in EXPIRED_LINK_CODES) throw ExpiredLinkException(response.code)
                         throw RuntimeException("Failed to download file (HTTP ${response.code})")
                     }
                 }

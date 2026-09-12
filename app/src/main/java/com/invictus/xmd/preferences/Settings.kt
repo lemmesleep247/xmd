@@ -44,10 +44,25 @@ object Settings {
     private const val KEY_DEFAULT_SAVE_LOCATION = "default_save_location_path"
     private const val KEY_DISABLE_CATEGORIZATION = "disable_folder_categorization"
     private const val KEY_WIFI_ONLY = "wifi_only_downloads"
+    // Legacy pre-merge keys (total + mobile were separate toggles) --
+    // read-only now, only consulted by [migrateDataLimitIfNeeded] to carry
+    // an existing user's setting forward into the merged key set below.
+    private const val KEY_TOTAL_DATA_LIMIT_ENABLED = "total_data_limit_enabled"
+    private const val KEY_TOTAL_DATA_LIMIT_BYTES = "total_data_limit_bytes"
+    private const val KEY_MOBILE_DATA_LIMIT_ENABLED = "mobile_data_limit_enabled"
+    private const val KEY_MOBILE_DATA_LIMIT_BYTES = "mobile_data_limit_bytes"
+    private const val KEY_DATA_LIMIT_ENABLED = "data_limit_enabled"
+    private const val KEY_DATA_LIMIT_BYTES = "data_limit_bytes"
+    private const val KEY_DATA_LIMIT_SCOPE = "data_limit_scope"
+    private const val KEY_DATA_USAGE_BASELINE_DAY = "data_usage_baseline_day"
+    private const val KEY_DATA_USAGE_TOTAL_BASELINE = "data_usage_total_baseline"
+    private const val KEY_DATA_USAGE_MOBILE_ACCUM = "data_usage_mobile_accum"
+    private const val KEY_DATA_USAGE_MOBILE_BASELINE_LAST_TICK = "data_usage_mobile_baseline_last_tick"
     private const val KEY_ADBLOCK_ENABLED = "browser_adblock_enabled"
     private const val KEY_BACKGROUND_PLAYBACK_ENABLED = "browser_background_playback_enabled"
     private const val KEY_TABS_GRID_MODE = "browser_tabs_grid_mode"
     private const val KEY_AUTO_CHECK_UPDATES = "about_auto_check_for_updates"
+    private const val KEY_UPDATE_CHANNEL = "about_update_channel"
 
     private lateinit var prefs: SharedPreferences
 
@@ -151,6 +166,110 @@ object Settings {
     fun wifiOnlyDownloads(): Boolean = prefs.getBoolean(KEY_WIFI_ONLY, false)
     fun setWifiOnlyDownloads(value: Boolean) {
         prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+    }
+
+    /** Sentinel [QueueItem.error] text marking a PAUSED item as auto-paused
+     *  by the daily data limit -- same idea as [WIFI_WAIT_MARKER], but this
+     *  one does NOT auto-resume; the user is only notified, matching the
+     *  spec (limit resets at midnight, no automatic resume). */
+    const val DATA_LIMIT_WAIT_MARKER = "Daily data limit reached"
+
+    /** Which network(s) count toward [dataLimitBytes]. Replaces the old
+     *  "Daily Data Limit (Total)" / "Daily Data Limit (Mobile Only)" pair
+     *  of independent toggles with a single toggle whose scope is picked
+     *  from a dropdown -- MOBILE and WIFI match the old mobile-only and
+     *  (new) wifi-only cases, TOTAL matches the old "Total" toggle. */
+    enum class DataLimitScope { MOBILE, WIFI, TOTAL }
+
+    // ── Daily data limit ────────────────────────────────────────────────
+    // One on/off switch, one byte cap, and a [DataLimitScope] picking which
+    // network(s) count toward it. Hitting the cap pauses every live
+    // download (marked with DATA_LIMIT_WAIT_MARKER) and blocks new ones
+    // from starting; it resets at local midnight via DataUsageTracker's day
+    // rollover, and resuming after that is manual (a notification is
+    // shown, nothing auto-resumes).
+    fun dataLimitEnabled(): Boolean {
+        migrateDataLimitIfNeeded()
+        return prefs.getBoolean(KEY_DATA_LIMIT_ENABLED, false)
+    }
+    fun setDataLimitEnabled(value: Boolean) {
+        prefs.edit().putBoolean(KEY_DATA_LIMIT_ENABLED, value).apply()
+    }
+
+    /** Cap in bytes for [dataLimitEnabled]. Default 2 GiB. */
+    fun dataLimitBytes(): Long {
+        migrateDataLimitIfNeeded()
+        return prefs.getLong(KEY_DATA_LIMIT_BYTES, 2L * 1024 * 1024 * 1024)
+    }
+    fun setDataLimitBytes(bytes: Long) {
+        prefs.edit().putLong(KEY_DATA_LIMIT_BYTES, bytes).apply()
+    }
+
+    fun dataLimitScope(): DataLimitScope {
+        migrateDataLimitIfNeeded()
+        val name = prefs.getString(KEY_DATA_LIMIT_SCOPE, DataLimitScope.TOTAL.name)
+        return runCatching { DataLimitScope.valueOf(name ?: DataLimitScope.TOTAL.name) }
+            .getOrDefault(DataLimitScope.TOTAL)
+    }
+    fun setDataLimitScope(scope: DataLimitScope) {
+        prefs.edit().putString(KEY_DATA_LIMIT_SCOPE, scope.name).apply()
+    }
+
+    /** One-time carry-forward from the old total+mobile toggle pair into
+     *  the merged key set above, run lazily on first read so it doesn't
+     *  need its own spot in FfApp.onCreate. A user who had the "Total"
+     *  toggle on keeps an equivalent TOTAL-scoped limit; one who only had
+     *  "Mobile Only" on keeps an equivalent MOBILE-scoped limit; a user who
+     *  had neither (or, previously, both -- no longer representable as one
+     *  toggle) lands on the same off-by-default TOTAL/2 GiB state a fresh
+     *  install would see. Guarded by KEY_DATA_LIMIT_ENABLED's presence, so
+     *  this only ever runs once per install. */
+    private fun migrateDataLimitIfNeeded() {
+        if (prefs.contains(KEY_DATA_LIMIT_ENABLED)) return
+        val legacyTotalEnabled = prefs.getBoolean(KEY_TOTAL_DATA_LIMIT_ENABLED, false)
+        val legacyMobileEnabled = prefs.getBoolean(KEY_MOBILE_DATA_LIMIT_ENABLED, false)
+        val (enabled, scope, bytes) = when {
+            legacyTotalEnabled -> Triple(
+                true,
+                DataLimitScope.TOTAL,
+                prefs.getLong(KEY_TOTAL_DATA_LIMIT_BYTES, 2L * 1024 * 1024 * 1024),
+            )
+            legacyMobileEnabled -> Triple(
+                true,
+                DataLimitScope.MOBILE,
+                prefs.getLong(KEY_MOBILE_DATA_LIMIT_BYTES, 500L * 1024 * 1024),
+            )
+            else -> Triple(false, DataLimitScope.TOTAL, 2L * 1024 * 1024 * 1024)
+        }
+        prefs.edit()
+            .putBoolean(KEY_DATA_LIMIT_ENABLED, enabled)
+            .putString(KEY_DATA_LIMIT_SCOPE, scope.name)
+            .putLong(KEY_DATA_LIMIT_BYTES, bytes)
+            .apply()
+    }
+
+    // ── Daily data usage bookkeeping (DataUsageTracker's persisted state) ─
+    fun dataUsageBaselineDay(): Long = prefs.getLong(KEY_DATA_USAGE_BASELINE_DAY, -1L)
+    fun dataUsageTotalBaseline(): Long = prefs.getLong(KEY_DATA_USAGE_TOTAL_BASELINE, 0L)
+    fun dataUsageMobileAccum(): Long = prefs.getLong(KEY_DATA_USAGE_MOBILE_ACCUM, 0L)
+    fun dataUsageMobileBaselineAtLastTick(): Long =
+        prefs.getLong(KEY_DATA_USAGE_MOBILE_BASELINE_LAST_TICK, 0L)
+
+    fun setDataUsageBaseline(day: Long, totalBaseline: Long, mobileAccum: Long, mobileBaselineAtLastTick: Long) {
+        prefs.edit()
+            .putLong(KEY_DATA_USAGE_BASELINE_DAY, day)
+            .putLong(KEY_DATA_USAGE_TOTAL_BASELINE, totalBaseline)
+            .putLong(KEY_DATA_USAGE_MOBILE_ACCUM, mobileAccum)
+            .putLong(KEY_DATA_USAGE_MOBILE_BASELINE_LAST_TICK, mobileBaselineAtLastTick)
+            .apply()
+    }
+
+    fun setDataUsageMobileAccum(value: Long) {
+        prefs.edit().putLong(KEY_DATA_USAGE_MOBILE_ACCUM, value).apply()
+    }
+
+    fun setDataUsageMobileBaselineAtLastTick(value: Long) {
+        prefs.edit().putLong(KEY_DATA_USAGE_MOBILE_BASELINE_LAST_TICK, value).apply()
     }
 
     // ── Browser: Adblock (Brave-style Shields: level + per-site allowlist) ─
@@ -272,6 +391,26 @@ object Settings {
         prefs.edit().putBoolean(KEY_AUTO_CHECK_UPDATES, value).apply()
     }
 
+    /** Which GitHub Releases channel the About screen's update check should
+     *  fetch from -- [STABLE] hits `/releases/latest` (GitHub's own
+     *  latest-non-prerelease pointer, built by release.yml's `vX.Y.Z`
+     *  tags), [PREVIEW] lists recent releases and takes the newest one
+     *  flagged `prerelease: true` (built by prerelease.yml's `vX.Y.Z-*`
+     *  tags) even if a newer stable exists -- switching to Preview is an
+     *  explicit opt-in to pre-release builds, not "whichever is newest". */
+    enum class UpdateChannel { STABLE, PREVIEW }
+
+    fun updateChannel(): UpdateChannel =
+        if (prefs.getString(KEY_UPDATE_CHANNEL, null) == UpdateChannel.PREVIEW.name) {
+            UpdateChannel.PREVIEW
+        } else {
+            UpdateChannel.STABLE
+        }
+
+    fun setUpdateChannel(value: UpdateChannel) {
+        prefs.edit().putString(KEY_UPDATE_CHANNEL, value.name).apply()
+    }
+
     // ── Browser: Search Engine ─────────────────────────────────────────
     enum class SearchEngine(
         val id: String,
@@ -337,6 +476,67 @@ object Settings {
         }
         val template = engine.queryUrlTemplate.ifBlank { SearchEngine.GOOGLE.queryUrlTemplate }
         return template.replace("%s", encoded)
+    }
+
+    // ── Browser: Home Page ──────────────────────────────────────────────
+    // What the toolbar's Home button opens. SPEED_DIAL (default) reuses the
+    // existing goHome() behavior (reset tab + show the bookmarks/shortcuts
+    // grid) -- every other entry is a plain URL loaded like a typed address.
+    // Deliberately does NOT affect New Tab or app cold-start, only the Home
+    // button, so those keep landing on the Speed Dial regardless of this
+    // setting.
+    enum class HomePage(
+        val id: String,
+        val displayName: String,
+        val url: String,
+        val domain: String,
+    ) {
+        SPEED_DIAL("speed_dial", "Speed Dial", "", "Bookmarks & shortcuts"),
+        GOOGLE("google", "Google", "https://www.google.com", "google.com"),
+        DUCKDUCKGO("duckduckgo", "DuckDuckGo", "https://duckduckgo.com", "duckduckgo.com"),
+        BRAVE("brave", "Brave Search", "https://search.brave.com", "search.brave.com"),
+        BING("bing", "Bing", "https://www.bing.com", "bing.com"),
+        YAHOO("yahoo", "Yahoo", "https://www.yahoo.com", "yahoo.com"),
+        CUSTOM("custom", "Custom", "", "Custom URL");
+
+        companion object {
+            fun fromId(id: String?): HomePage =
+                entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SPEED_DIAL
+        }
+    }
+
+    private const val KEY_HOME_PAGE = "browser_home_page"
+    private const val KEY_CUSTOM_HOME_URL = "browser_custom_home_url"
+    private const val KEY_CUSTOM_HOME_NAME = "browser_custom_home_name"
+
+    fun homePage(): HomePage =
+        HomePage.fromId(prefs.getString(KEY_HOME_PAGE, HomePage.SPEED_DIAL.id))
+
+    fun setHomePage(page: HomePage) {
+        prefs.edit().putString(KEY_HOME_PAGE, page.id).apply()
+    }
+
+    fun customHomeUrl(): String = prefs.getString(KEY_CUSTOM_HOME_URL, "").orEmpty()
+
+    fun setCustomHomeUrl(url: String) {
+        prefs.edit().putString(KEY_CUSTOM_HOME_URL, url.trim()).apply()
+    }
+
+    fun customHomeName(): String = prefs.getString(KEY_CUSTOM_HOME_NAME, "").orEmpty()
+
+    fun setCustomHomeName(name: String) {
+        prefs.edit().putString(KEY_CUSTOM_HOME_NAME, name.trim()).apply()
+    }
+
+    /** URL the Home button should load, or null when it should show the
+     *  Speed Dial instead (SPEED_DIAL, or CUSTOM with a blank URL). */
+    fun homePageUrl(): String? {
+        val page = homePage()
+        return when (page) {
+            HomePage.SPEED_DIAL -> null
+            HomePage.CUSTOM -> customHomeUrl().trim().ifBlank { null }
+            else -> page.url
+        }
     }
 
     // Epoch millis of the last successful AdblockListUpdater.refresh() --

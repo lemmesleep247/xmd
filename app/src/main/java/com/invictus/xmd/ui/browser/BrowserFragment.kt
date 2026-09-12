@@ -86,6 +86,16 @@ class BrowserFragment : Fragment() {
     interface Callbacks {
         /** Same handoff HomeFragment uses for pasted links -- expands + queues + resolves. */
         fun triggerPrepare(lines: List<String>)
+        /**
+         * Same as [triggerPrepare] for a single link, but also records the
+         * webpage it was captured from ([pageUrl]) -- the browser is the
+         * only entry point that actually knows this. Lets an expired direct
+         * link later be recovered IDM-style by re-opening that page instead
+         * of just re-hitting the same dead URL (see LinkRefetchActivity).
+         * Default implementation just falls back to [triggerPrepare] so
+         * other Callbacks implementers don't need to do anything.
+         */
+        fun triggerPrepareFromPage(url: String, pageUrl: String) { triggerPrepare(listOf(url)) }
         fun onBrowserMenuAction(action: BrowserMenuAction)
         /** A stream MediaSniffer picked up was tapped in the "videos found"
          *  sheet. HLS/DASH ([needsPicker] true) routes through the same
@@ -152,6 +162,7 @@ class BrowserFragment : Fragment() {
     private var speedDialVisible: Boolean by mutableStateOf(true)
     private var browserMenuExpanded: Boolean by mutableStateOf(false)
     private var clearBrowsingDataDialogOpen: Boolean by mutableStateOf(false)
+    private var showTranslateLanguageDialog: Boolean by mutableStateOf(false)
     private var downloadPrompt: BrowserDownloadPrompt? by mutableStateOf(null)
     // Compose State (not just a plain var) so browserDialogHost's
     // setContent lambda recomposes when this changes -- non-null shows
@@ -214,6 +225,13 @@ class BrowserFragment : Fragment() {
     private var detectedLinkVisible: Boolean by mutableStateOf(false)
     private var sniffedMediaFabVisible: Boolean by mutableStateOf(false)
     private var sniffedMediaFabText: String by mutableStateOf("")
+    // True when the sniffed-media FAB is currently showing for "this
+    // YouTube page has a video" rather than MediaSniffer's normal
+    // sniffedMedia list -- see updateSniffedMediaFab()'s YouTube branch.
+    // Drives onSniffedMediaTap to go straight to the quality picker
+    // instead of opening SniffedMediaSheet (which would have nothing to
+    // list, since no MediaSniffer entries exist for a YouTube page).
+    private var sniffedMediaIsYoutubePage: Boolean by mutableStateOf(false)
 
     // ── Phase E: browserToolbar's state ──────────────────────────────────
     // Drives BrowserToolbarRow's setContent lambda below -- same "field on
@@ -376,14 +394,16 @@ class BrowserFragment : Fragment() {
                                     expanded = browserMenuExpanded,
                                     desktopSiteEnabled = isCurrentTabDesktopMode(),
                                     currentPageAvailable = currentPageUrl() != null,
+                                    currentPagePinned = if (browserMenuExpanded) isCurrentPagePinned() else false,
                                     onDismiss = { browserMenuExpanded = false },
                                     onRefresh = ::reloadActiveTab,
                                     onFindInPage = ::showFindInPage,
                                     onToggleDesktopSite = ::toggleDesktopModeForCurrentTab,
                                     onCopyPage = { currentPageUrl()?.let(::copyLinkToClipboard) },
                                     onSharePage = { currentPageUrl()?.let(::shareLink) },
-                                    onAddAsApp = ::addCurrentPageAsApp,
+                                    onAddAsApp = ::toggleCurrentPageAsApp,
                                     onClearBrowsingData = { clearBrowsingDataDialogOpen = true },
+                                    onTranslatePage = { showTranslateLanguageDialog = true },
                                     onAction = { action ->
                                         (activity as? Callbacks)?.onBrowserMenuAction(action)
                                     },
@@ -467,7 +487,7 @@ class BrowserFragment : Fragment() {
                             onDetectedLinkTap = ::onAddLinkClicked,
                             sniffedMediaVisible = sniffedMediaFabVisible,
                             sniffedMediaText = sniffedMediaFabText,
-                            onSniffedMediaTap = ::showSniffedMediaSheet,
+                            onSniffedMediaTap = ::onSniffedMediaFabTapped,
                         )
                     },
                     dialogs = {
@@ -535,13 +555,27 @@ class BrowserFragment : Fragment() {
                                 },
                             )
                         }
+                        if (showTranslateLanguageDialog) {
+                            TranslateLanguageDialog(
+                                onDismiss = { showTranslateLanguageDialog = false },
+                                onLanguageSelected = { code ->
+                                    showTranslateLanguageDialog = false
+                                    translateCurrentPage(code)
+                                },
+                            )
+                        }
                         downloadPrompt?.let { prompt ->
                             BrowserDownloadConfirmationDialog(
                                 prompt = prompt,
                                 onDismiss = { downloadPrompt = null },
                                 onCopyLink = ::copyLinkToClipboard,
                                 onAddToDownloads = { url ->
-                                    (activity as? Callbacks)?.triggerPrepare(listOf(url))
+                                    val pageUrl = tabs.getOrNull(currentTabIndex)?.url
+                                    if (pageUrl != null) {
+                                        (activity as? Callbacks)?.triggerPrepareFromPage(url, pageUrl)
+                                    } else {
+                                        (activity as? Callbacks)?.triggerPrepare(listOf(url))
+                                    }
                                 },
                             )
                         }
@@ -672,13 +706,22 @@ class BrowserFragment : Fragment() {
         }
     }
 
-    /** Home button: returns the *current* tab to the speed dial (unlike New
-     *  Tab, which opens an additional tab) -- reuses the existing tab slot
-     *  instead of growing the tab count. */
+    /** Home button: returns the *current* tab to the configured home page
+     *  (Settings.homePageUrl()) -- unlike New Tab, which opens an
+     *  additional tab, this reuses the existing tab slot instead of growing
+     *  the tab count. Default/SPEED_DIAL and a blank custom URL both fall
+     *  back to the original behavior of showing the bookmarks/shortcuts
+     *  grid; any other choice loads that URL the same way a typed address
+     *  would. */
     private fun goHome() {
         val tab = tabs.getOrNull(currentTabIndex) ?: return
-        resetTabToBlank(tab)
-        showSpeedDial()
+        val homeUrl = Settings.homePageUrl()
+        if (homeUrl == null) {
+            resetTabToBlank(tab)
+            showSpeedDial()
+        } else {
+            loadUrl(homeUrl)
+        }
     }
 
     // ── WebView pool ─────────────────────────────────────────────────────
@@ -1810,11 +1853,27 @@ class BrowserFragment : Fragment() {
     /** Reflects [tab]'s current sniffedMedia count onto the chip -- called
      *  from onPageStarted (clears it), and from shouldInterceptRequest's
      *  sniff hook every time a genuinely new stream URL is found. No-op
-     *  visually unless [tab] is the tab currently on screen. */
+     *  visually unless [tab] is the tab currently on screen.
+     *
+     *  Also covers YouTube: MediaSniffer's URL/extension matching never
+     *  catches YouTube's own signed googlevideo.com segment URLs (see
+     *  LinkParser.isYoutubeVideoPage's doc comment), so a YouTube watch/
+     *  shorts page shows the FAB purely off the page URL, independent of
+     *  tab.sniffedMedia. Gated on BuildConfig.HAS_YOUTUBE_SUPPORT since
+     *  the Lite build has no yt-dlp/quality-picker to hand the tap off to. */
     private fun updateSniffedMediaFab(tab: BrowserTab) {
         if (!isCurrentTab(tab)) return
         val count = tab.sniffedMedia.size
         if (count == 0) {
+            val url = tab.url
+            if (com.invictus.xmd.BuildConfig.HAS_YOUTUBE_SUPPORT &&
+                url != null && com.invictus.xmd.utils.LinkParser.isYoutubeVideoPage(url)
+            ) {
+                sniffedMediaFabText = getString(R.string.sniffed_media_chip_one)
+                sniffedMediaIsYoutubePage = true
+                sniffedMediaFabVisible = true
+                return
+            }
             sniffedMediaFabVisible = false
             return
         }
@@ -1823,7 +1882,22 @@ class BrowserFragment : Fragment() {
         } else {
             getString(R.string.sniffed_media_chip_many, count)
         }
+        sniffedMediaIsYoutubePage = false
         sniffedMediaFabVisible = true
+    }
+
+    /** Tap handler for the sniffed-media FAB -- branches on
+     *  [sniffedMediaIsYoutubePage] since that variant has no
+     *  tab.sniffedMedia entries for SniffedMediaSheet to list; it hands
+     *  the current page URL straight to the same quality-picker flow a
+     *  sheet row would (triggerSniffedMedia(needsPicker = true)) instead. */
+    private fun onSniffedMediaFabTapped() {
+        if (sniffedMediaIsYoutubePage) {
+            val url = currentPageUrl() ?: return
+            (activity as? Callbacks)?.triggerSniffedMedia(url, needsPicker = true)
+            return
+        }
+        showSniffedMediaSheet()
     }
 
     /** Opens the Compose SniffedMediaSheet (see browserDialogHost's
@@ -1972,6 +2046,19 @@ class BrowserFragment : Fragment() {
     private fun currentPageUrl(): String? = tabs.getOrNull(currentTabIndex)?.url
         ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
+    /** Google Translate's website proxy -- reloads the current page through
+     *  translate.google.com/translate rather than a real on-device
+     *  translation engine, so it needs no API key or extra dependency; same
+     *  trick most lightweight Android browsers use for a "Translate" menu
+     *  item. [targetLangCode] is a Google Translate `tl` value (e.g. "hi",
+     *  "es") from [TRANSLATE_LANGUAGES]. */
+    private fun translateCurrentPage(targetLangCode: String) {
+        val url = currentPageUrl() ?: return
+        val translateUrl = "https://translate.google.com/translate?sl=auto&tl=$targetLangCode&u=" +
+            android.net.Uri.encode(url)
+        loadUrl(translateUrl)
+    }
+
     private fun shareLink(url: String) {
         val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
             type = "text/plain"
@@ -1994,10 +2081,24 @@ class BrowserFragment : Fragment() {
      * screen" toast is fired from [PinnedShortcutReceiver] instead, via the
      * callback IntentSender below, which the system only invokes once the
      * shortcut is genuinely placed.
+     *
+     * Same menu entry doubles as "Remove from Home screen" once the
+     * current page is already pinned (see [isCurrentPagePinned]) -- this
+     * function checks pinned state up front and branches to
+     * [PinnedShortcutUtils.unpin] instead of requesting a new pin.
      */
-    private fun addCurrentPageAsApp() {
+    private fun toggleCurrentPageAsApp() {
         val url = currentPageUrl() ?: return
         val context = requireContext().applicationContext
+
+        if (PinnedShortcutUtils.isPinned(context, url)) {
+            PinnedShortcutUtils.unpin(context, url)
+            if (isAdded) {
+                Toast.makeText(requireContext(), R.string.removed_from_home_screen, Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
         if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
             Toast.makeText(requireContext(), R.string.add_to_home_screen_unsupported, Toast.LENGTH_SHORT).show()
             return
@@ -2010,8 +2111,7 @@ class BrowserFragment : Fragment() {
             }
             if (!isAdded) return@launch
 
-            val icon = favicon?.let { androidx.core.graphics.drawable.IconCompat.createWithAdaptiveBitmap(it) }
-                ?: androidx.core.graphics.drawable.IconCompat.createWithResource(context, R.mipmap.xmd)
+            val icon = PinnedShortcutUtils.buildIcon(context, favicon, R.mipmap.xmd)
 
             val launchIntent = android.content.Intent(context, com.invictus.xmd.ui.WebAppActivity::class.java).apply {
                 action = android.content.Intent.ACTION_VIEW
@@ -2020,13 +2120,7 @@ class BrowserFragment : Fragment() {
                 flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
             }
 
-            // A short, stable id -- some launchers/OEM ShortcutManager
-            // implementations silently drop pin requests whose id is an
-            // entire (possibly very long, query-string-laden) URL.
-            val shortcutId = "webapp_" + java.security.MessageDigest.getInstance("SHA-256")
-                .digest(url.toByteArray())
-                .joinToString("") { "%02x".format(it) }
-                .take(32)
+            val shortcutId = PinnedShortcutUtils.shortcutIdFor(url)
             val shortcut = androidx.core.content.pm.ShortcutInfoCompat.Builder(context, shortcutId)
                 .setShortLabel(title)
                 .setLongLabel(title)
@@ -2042,9 +2136,7 @@ class BrowserFragment : Fragment() {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
             )
 
-            val requestSent = androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(
-                context, shortcut, callback.intentSender
-            )
+            val requestSent = PinnedShortcutUtils.pin(context, shortcut, callback.intentSender)
             // A false return here means the launcher refused the request
             // outright (e.g. it doesn't support pinning at all) -- a real,
             // immediate failure, unlike a silent decline inside the dialog
@@ -2053,6 +2145,15 @@ class BrowserFragment : Fragment() {
                 Toast.makeText(requireContext(), R.string.add_to_home_screen_failed, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /** Drives the "Add to Home screen" / "Remove from Home screen" label
+     *  and icon swap in [BrowserOverflowMenu] -- re-checked each time the
+     *  overflow menu opens, since pin state can only change via this
+     *  fragment's own toggle action (no external observer needed). */
+    private fun isCurrentPagePinned(): Boolean {
+        val url = currentPageUrl() ?: return false
+        return PinnedShortcutUtils.isPinned(requireContext().applicationContext, url)
     }
 
 }

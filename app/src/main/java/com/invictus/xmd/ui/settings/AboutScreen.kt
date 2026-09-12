@@ -20,8 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,8 +27,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.invictus.xmd.ui.icons.Icon
@@ -40,7 +42,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,9 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.invictus.xmd.R
+import com.invictus.xmd.preferences.Settings
 import com.invictus.xmd.utils.GithubAvatarLoader
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** A developer credit -- [name] shown as the row title, [githubId] shown as
@@ -87,39 +88,43 @@ sealed class UpdateAvailability {
 }
 
 /**
- * App identity, version, GitHub link, license notice, developer credits,
- * and the open-source libraries Xmd is built on. Rendered directly by
- * SettingsActivity's AboutRoute (NavHost route body) -- no Fragment host.
+ * App identity, version, GitHub link, license notice, and developer
+ * credits. Rendered directly by SettingsActivity's AboutRoute (NavHost
+ * route body) -- no Fragment host. The open-source libraries Xmd is built
+ * on live on their own screen (see LibrariesScreen), reached via the
+ * "Libraries" action button below.
  *
  * Redesigned with mpvRx's About screen as the visual reference: an animated
  * gradient hero card for identity, pill-badge version tag, a pair of
  * action buttons, avatar-style rows for developer credits, and an Updates
- * section -- auto-check toggle, "Check for updates now" button, and (once
- * an update is found) an in-app Download -> Install flow like mpvRx's
- * UpdateSheet, just rendered inline in the card instead of a separate
- * bottom sheet. Trimmed down from mpvRx's version: no donation section, no
- * update channel selector (Xmd ships a single GitHub-Releases channel, not
- * mpvRx's stable/preview split), and release notes show as plain text
- * rather than rendered Markdown (no Markdown-rendering dependency in Xmd).
+ * section -- auto-check toggle, Stable/Preview channel picker, "Check for
+ * updates now" button, and (once an update is found) an in-app Download ->
+ * Install flow like mpvRx's UpdateSheet, just rendered inline in the card
+ * instead of a separate bottom sheet. Trimmed down from mpvRx's version: no
+ * donation section, and release notes show as plain text rather than
+ * rendered Markdown (no Markdown-rendering dependency in Xmd). Unlike
+ * mpvRx's "Preview (Nightly)", Xmd's second channel is labeled "Preview
+ * (Beta)" -- prerelease.yml publishes tagged pre-releases (v1.1.0-beta.1,
+ * -rc.1, etc), not actual nightly builds.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
     versionText: String,
     onGithubClick: () -> Unit,
+    onLibrariesClick: () -> Unit,
     developers: List<AboutDeveloper>,
-    credits: List<Pair<String, String>>,
     onDeveloperClick: (AboutDeveloper) -> Unit,
     autoCheckForUpdates: Boolean,
     onAutoCheckForUpdatesChanged: (Boolean) -> Unit,
+    updateChannel: Settings.UpdateChannel,
+    onUpdateChannelChanged: (Settings.UpdateChannel) -> Unit,
     isCheckingForUpdate: Boolean,
     onCheckForUpdateClick: () -> Unit,
     updateAvailability: UpdateAvailability,
     onDownloadUpdateClick: () -> Unit,
     onInstallUpdateClick: () -> Unit,
 ) {
-    val coroutineScope = rememberCoroutineScope()
-    val creditsSectionRequester = remember { BringIntoViewRequester() }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -213,14 +218,11 @@ fun AboutScreen(
                     val btnContainer = cs.primary
                     val btnContent = cs.onPrimary
 
-                    // Library (left) -- scrolls down to the Credits & Open
-                    // Source section further down this same screen, since
-                    // Xmd (unlike mpvRx) doesn't have a separate Libraries
-                    // screen to navigate to.
+                    // Libraries (left) -- opens the standalone Libraries
+                    // screen listing the open-source projects Xmd is built
+                    // on, mirroring mpvRx's separate Libraries screen.
                     Button(
-                        onClick = {
-                            coroutineScope.launch { creditsSectionRequester.bringIntoView() }
-                        },
+                        onClick = onLibrariesClick,
                         modifier = Modifier.weight(1f).height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -235,7 +237,7 @@ fun AboutScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = stringResource(id = R.string.about_credits_title),
+                            text = stringResource(id = R.string.about_libraries_title),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -269,37 +271,6 @@ fun AboutScreen(
             }
         }
 
-        // ===== License =====
-        Spacer(Modifier.height(8.dp))
-        SettingsSectionHeader(title = stringResource(R.string.about_license_title))
-
-        SettingsSectionCard(contentPadding = PaddingValues(16.dp)) {
-            Row {
-                Icon(
-                    imageVector = Icons.Article,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp).padding(top = 2.dp),
-                )
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "AGPL-3.0",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.about_license_body),
-                        style = MaterialTheme.typography.bodyMedium,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
         // ===== Updates =====
         Spacer(Modifier.height(8.dp))
         SettingsSectionHeader(title = stringResource(R.string.about_updates_title))
@@ -313,6 +284,40 @@ fun AboutScreen(
             )
             SettingsDivider()
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.about_update_channel_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.about_update_channel_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = updateChannel == Settings.UpdateChannel.STABLE,
+                        onClick = { onUpdateChannelChanged(Settings.UpdateChannel.STABLE) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        icon = {
+                            SegmentedButtonDefaults.Icon(active = updateChannel == Settings.UpdateChannel.STABLE)
+                        },
+                    ) {
+                        Text(stringResource(R.string.about_update_channel_stable))
+                    }
+                    SegmentedButton(
+                        selected = updateChannel == Settings.UpdateChannel.PREVIEW,
+                        onClick = { onUpdateChannelChanged(Settings.UpdateChannel.PREVIEW) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        icon = {
+                            SegmentedButtonDefaults.Icon(active = updateChannel == Settings.UpdateChannel.PREVIEW)
+                        },
+                    ) {
+                        Text(stringResource(R.string.about_update_channel_preview))
+                    }
+                }
+
                 Button(
                     onClick = onCheckForUpdateClick,
                     enabled = !isCheckingForUpdate,
@@ -360,43 +365,33 @@ fun AboutScreen(
             }
         }
 
-        // ===== Credits =====
+        // ===== License =====
         Spacer(Modifier.height(8.dp))
-        SettingsSectionHeader(
-            title = stringResource(R.string.about_credits_title),
-            modifier = Modifier.bringIntoViewRequester(creditsSectionRequester),
-        )
-        Text(
-            text = stringResource(R.string.about_credits_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-        )
-        Spacer(Modifier.height(8.dp))
+        SettingsSectionHeader(title = stringResource(R.string.about_license_title))
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            credits.forEach { (name, desc) ->
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = name,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = desc,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+        SettingsSectionCard(contentPadding = PaddingValues(16.dp)) {
+            Row {
+                Icon(
+                    imageVector = Icons.Article,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp).padding(top = 2.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "AGPL-3.0",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.about_license_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

@@ -123,7 +123,7 @@
     <string name="about_github_url" translatable="false">https://github.com/Utsavrajputt/xmd</string>
     <string name="about_license_title">License</string>
     <string name="about_license_body">Released under the GNU Affero General Public License v3.0 (AGPL-3.0). Xmd is free and open-source software — you are free to use, study, share, and modify it.</string>
-    <string name="about_credits_title">Credits &amp; Open Source</string>
+    <string name="about_libraries_title">Libraries</string>
     <string name="about_credits_hint">Xmd is built on the shoulders of these open-source projects</string>
     <string name="about_credit_ytdlp_desc">YouTube and video-site downloads</string>
     <string name="about_credit_libtorrent_desc">Torrent and magnet link downloads</string>
@@ -135,6 +135,10 @@
     <string name="about_updates_title">Updates</string>
     <string name="about_auto_check_for_updates">Auto-check for updates</string>
     <string name="about_check_on_startup">Check on startup</string>
+    <string name="about_update_channel_title">Update Channel</string>
+    <string name="about_update_channel_subtitle">Preview builds are signed pre-release versions tagged from the latest changes and may be unstable.</string>
+    <string name="about_update_channel_stable">Stable</string>
+    <string name="about_update_channel_preview">Preview (Beta)</string>
     <string name="about_check_for_updates_now">Check for updates now</string>
     <string name="about_checking_for_updates">Checking for updates…</string>
     <string name="about_up_to_date">You\'re on the latest version</string>
@@ -201,6 +205,14 @@
     <string name="settings_disable_categorization_hint">Save all downloads directly into the default location instead of sorting them into Videos, Music, Documents, and other subfolders.</string>
     <string name="settings_wifi_only">Download on Wi-Fi Only</string>
     <string name="settings_wifi_only_hint">Pause all downloads on cellular data and resume automatically when Wi-Fi is back.</string>
+    <string name="settings_data_limit">Daily Data Limit</string>
+    <string name="settings_data_limit_hint">Pause all downloads once today\'s usage for the network below reaches this. Resets at midnight.</string>
+    <string name="settings_data_limit_scope_label">Counts usage from</string>
+    <string name="settings_data_limit_scope_mobile">Mobile Data Only</string>
+    <string name="settings_data_limit_scope_wifi">Wi-Fi Only</string>
+    <string name="settings_data_limit_scope_total">Mobile + Wi-Fi</string>
+    <string name="settings_data_limit_reached_title">Daily data limit reached</string>
+    <string name="settings_data_limit_reached_body">Downloads paused for today. They won\'t resume automatically -- retry after the limit resets at midnight, or raise the limit in Settings.</string>
     <string name="settings_shields_header">Shields</string>
     <string name="settings_shields_standard_title">Standard</string>
     <string name="settings_shields_standard_subtitle">Blocks ads, trackers, and analytics. Safe for any site.</string>
@@ -219,6 +231,8 @@
     <string name="settings_shields_add_site_invalid">Enter a valid domain, like example.com</string>
     <string name="settings_background_playback">Background playback</string>
     <string name="settings_background_playback_hint">Keeps audio/video playing when a site would otherwise pause it because the app isn\'t in the foreground.</string>
+    <string name="settings_general_header">General</string>
+    <string name="settings_playback_header">Playback</string>
     <string name="settings_search_engine">Search Engine</string>
     <string name="settings_search_engine_hint">Choose the default search engine used for address bar searches.</string>
     <string name="search_engine_custom">Custom</string>
@@ -226,6 +240,14 @@
     <string name="search_engine_custom_url">Search URL</string>
     <string name="search_engine_custom_url_hint" formatted="false">Use %s where the search query goes (e.g. https://kagi.com/search?q=%s)</string>
     <string name="search_engine_invalid_url">Please enter a valid search URL</string>
+    <string name="settings_home_page">Home Page</string>
+    <string name="settings_home_page_hint">Choose what the Home button in the browser opens.</string>
+    <string name="home_page_speed_dial">Speed Dial</string>
+    <string name="home_page_custom">Custom</string>
+    <string name="home_page_custom_name">Page Name</string>
+    <string name="home_page_custom_url">Home URL</string>
+    <string name="home_page_custom_url_hint">Enter a full URL, e.g. https://example.com</string>
+    <string name="home_page_invalid_url">Please enter a valid URL</string>
     <string name="sniffed_media_title">Videos &amp; audio found on this page</string>
     <string name="sniffed_media_chip_one">🎬 1 video</string>
     <string name="sniffed_media_chip_many">🎬 %d videos</string>
@@ -355,10 +377,15 @@
     <string name="browser_menu_title">Browser</string>
     <string name="browser_menu_private_dns">Private DNS</string>
     <string name="browser_menu_add_to_home_screen">Add to Home screen</string>
+    <string name="browser_menu_remove_from_home_screen">Remove from Home screen</string>
     <string name="add_to_home_screen_unsupported">Your launcher doesn\'t support home screen shortcuts</string>
     <string name="add_to_home_screen_added">Added to Home screen</string>
     <string name="add_to_home_screen_failed">Couldn\'t add to Home screen</string>
+    <string name="removed_from_home_screen">Removed from Home screen</string>
+    <string name="remove_from_home_screen_failed">Couldn\'t remove from Home screen</string>
     <string name="browser_menu_history">History</string>
+    <string name="browser_menu_translate">Translate</string>
+    <string name="translate_dialog_title">Translate page to</string>
     <string name="browser_menu_refresh">Refresh</string>
     <string name="browser_menu_desktop_site">Desktop site</string>
     <string name="browser_menu_clear_data">Clear browsing data</string>
@@ -411,6 +438,10 @@
     <string name="link_expired_title">Link expired</string>
     <string name="link_expired_message">%1$s\n\nThis download link has expired or is no longer available.</string>
     <string name="action_fetch_link">Fetch link</string>
+    <string name="action_fetch_from_browser">Fetch from browser</string>
+    <string name="link_refetch_title">Fetch link from website</string>
+    <string name="link_refetch_hint">This link has gone stale. Find the download button on this page and tap it to grab a fresh link.</string>
+    <string name="link_refetch_hint_named">Fetching a fresh link for \"%1$s\". Find the download button on this page and tap it.</string>
     <string name="storage_permission_title">Storage permission required</string>
     <string name="storage_permission_message">Xmd needs all-files access to save downloads in its internal-storage folder. Tap Allow on the next screen.</string>
     <string name="action_allow">Allow</string>
