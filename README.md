@@ -21,6 +21,18 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Utsavrajputt/xmd/actions/workflows/android-build.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Utsavrajputt/xmd/android-build.yml?branch=main&logo=github&label=Build" />
+  </a>
+  <a href="https://github.com/Utsavrajputt/xmd/deployments/github-pages">
+    <img src="https://img.shields.io/github/actions/workflow/status/Utsavrajputt/xmd/deploy-site.yml?branch=main&logo=github&label=Deploy" />
+  </a>
+  <a href="https://github.com/Utsavrajputt/xmd/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Utsavrajputt/xmd/release.yml?logo=github&label=Release%20Build" />
+  </a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/github/stars/Utsavrajputt/xmd?style=flat&logo=github&color=gold" />
   <img src="https://img.shields.io/github/forks/Utsavrajputt/xmd?style=flat&logo=github&color=blue" />
   <img src="https://img.shields.io/github/last-commit/Utsavrajputt/xmd?style=flat&logo=github" />
@@ -33,23 +45,19 @@
 
 ---
 
-## Table of Contents
+## 📸 Screenshots
 
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Build Flavors](#build-flavors)
-- [Project Structure](#project-structure)
-- [Building](#building)
-- [Releases](#releases)
-- [Permissions](#permissions)
-- [Contributing](#contributing)
-- [License](#license)
+<p align="center">
+  <img src="docs/screenshot-carousel.gif" width="100%" alt="Xmd screenshot carousel">
+</p>
+
+<sub>Auto-generated from <a href="fastlane/metadata/android/en-US/images/phoneScreenshots">fastlane/metadata/android/en-US/images/phoneScreenshots</a> by <a href="scripts/generate-screenshot-carousel.sh">scripts/generate-screenshot-carousel.sh</a> — drop screenshots in that folder and it rebuilds itself on push.</sub>
 
 ---
 
-## Features
+## ✨ Features
 
-<details open>
+<details>
 <summary><b>📥 Downloader</b></summary>
 
 | Feature | Description |
@@ -77,7 +85,7 @@
 
 </details>
 
-<details open>
+<details>
 <summary><b>🧲 Torrents</b></summary>
 
 | Feature | Description |
@@ -88,7 +96,7 @@
 
 </details>
 
-<details open>
+<details>
 <summary><b>▶️ YouTube & Instagram (yt-dlp)</b></summary>
 
 | Feature | Description |
@@ -101,7 +109,7 @@
 
 </details>
 
-<details open>
+<details>
 <summary><b>🌐 Browser</b></summary>
 
 | Feature | Description |
@@ -127,7 +135,7 @@
 
 </details>
 
-<details open>
+<details>
 <summary><b>🎨 Theme System</b></summary>
 
 | Feature | Description |
@@ -141,17 +149,7 @@
 
 ---
 
-## Screenshots
-
-<p align="center">
-  <img src="docs/screenshot-carousel.gif" width="100%" alt="Xmd screenshot carousel">
-</p>
-
-<sub>Auto-generated from <a href="fastlane/metadata/android/en-US/images/phoneScreenshots">fastlane/metadata/android/en-US/images/phoneScreenshots</a> by <a href="scripts/generate-screenshot-carousel.sh">scripts/generate-screenshot-carousel.sh</a> — drop screenshots in that folder and it rebuilds itself on push.</sub>
-
----
-
-## Build Flavors
+## 🧩 Build Flavors
 
 Xmd ships as two product flavors instead of one do-everything APK:
 
@@ -164,38 +162,7 @@ Each flavor is additionally split per-ABI (`armeabi-v7a`, `arm64-v8a`), so a rel
 
 ---
 
-## Project Structure
-
-```text
-app/src/main/java/com/invictus/xmd/
-├─ core/
-│  ├─ LinkParser.kt              # share/direct/fitgirl/YouTube link parsing & validation
-│  ├─ DownloadEngine.kt          # resumable streaming download engine
-│  ├─ TorrentEngine.kt           # magnet/.torrent download engine
-│  ├─ YtDlpManager.kt            # yt-dlp/ffmpeg wrapper (full flavor), no-op stub (lite flavor)
-│  ├─ CategoryDetector.kt        # extension -> DownloadCategory mapping
-│  ├─ QueueRepository.kt         # in-memory + Room-backed queue state
-│  ├─ Settings.kt                # persisted app settings (DNS mode, retry, yt-dlp channel...)
-│  ├─ DnsOverHttpsResolver.kt    # DoH resolver used by the in-app Browser
-│  ├─ BookmarkRepository.kt, Bookmark.kt
-│  ├─ HistoryRepository.kt, HistoryEntry.kt
-│  ├─ FaviconLoader.kt, SuggestApi.kt
-│  └─ db/                        # Room entities/DAOs (queue, bookmarks, history)
-├─ service/
-│  └─ DownloadService.kt         # foreground service driving downloads per category folder
-├─ ui/
-│  ├─ MainActivity.kt, HomeFragment.kt, DownloadsFragment.kt, QueueAdapter.kt
-│  ├─ BrowserFragment.kt         # speed-dial, per-tab WebView pool, tabs, DNS settings
-│  ├─ HistoryFragment.kt, HistoryAdapter.kt
-│  ├─ BookmarkAdapter.kt, SuggestionAdapter.kt
-│  ├─ theme/AppTheme.kt          # Default/Aurora/Nord/Dracula/Catppuccin theme definitions
-│  └─ ChallengeActivity.kt       # WebView for clearing Cloudflare/Turnstile challenges
-└─ FfApp.kt                      # Application class
-```
-
----
-
-## Building
+## 🛠️ Building
 
 Requires JDK 17 and the Android SDK (compileSdk 34, minSdk 26).
 
@@ -220,7 +187,7 @@ CI does this automatically on push to `main` via `.github/workflows/android-buil
 
 ---
 
-## Releases
+## 🚀 Releases
 
 Two tag-triggered workflows build signed APKs and publish them to GitHub Releases with a SHA-256 checksum and notes pulled from `CHANGELOG.md`:
 
@@ -248,7 +215,7 @@ You can also trigger either workflow manually from the **Actions** tab → **Mak
 
 ---
 
-## Permissions
+## 🔐 Permissions
 
 - `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` — fetching links, resolving torrents/DoH, and downloading
 - `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS` — background download progress notification
@@ -256,31 +223,7 @@ You can also trigger either workflow manually from the **Actions** tab → **Mak
 
 ---
 
-## Contributing
-
-Pull requests are welcome. For bigger changes, open an issue first to discuss what you'd like to change, so effort isn't wasted on something that doesn't fit the project direction.
-
-**Getting set up:** JDK 17 and the Android SDK (compileSdk 34, minSdk 26) — see [Building](#building) above.
-
-1. Fork the repo and create your branch from `main`
-2. Run `./gradlew lintRelease` locally before opening the PR, so CI doesn't catch it first
-3. Keep changes focused — one logical change per PR is easier to review than several unrelated ones bundled together
-4. If you're touching `QueueRepository.kt`, remember `setLinks()` must **merge** into the existing queue rather than replace it, or in-progress downloads get dropped from the UI (this bit us once already)
-5. Test on a real device before opening the PR
-6. Update `CHANGELOG.md` under an `## [Unreleased]` section if your change is user-facing (new feature, fix, behavior change) — maintainers will fold it into the next version section at release time
-7. Open a PR describing what changed and why — the PR template has a checklist covering the above
-
-Commit messages: short, descriptive, imperative mood is fine (e.g. `Fix category folder not created on first download`) — no strict format enforced.
-
-Code style: Kotlin, following the project's existing conventions — prefer small, well-named functions over large ones; the `core/` classes (`LinkParser`, `CategoryDetector`, `DownloadEngine`) are good examples of the granularity to aim for.
-
-For bugs and feature requests, use the issue templates — they ask for the info usually needed to act on a report.
-
-By contributing, you agree your contributions are licensed under the project's [AGPL-3.0 license](LICENSE).
-
----
-
-## License
+## 📄 License
 
 Distributed under **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)** — see [LICENSE](LICENSE).
 
