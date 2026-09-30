@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="download_dialog_open_in_browser">Open in Browser</string>
+    <string name="download_dialog_download_anyway">Download anyway</string>
+</resources>
