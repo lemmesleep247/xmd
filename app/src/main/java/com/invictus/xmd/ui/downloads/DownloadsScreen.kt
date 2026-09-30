@@ -92,6 +92,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.delay
+import com.invictus.xmd.utils.media.MediaProbe
+import com.invictus.xmd.utils.media.MediaInfoProbe
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -693,6 +698,10 @@ fun QueueItemRow(
     val haptics = LocalHapticFeedback.current
     val currentOnSwipeClear by rememberUpdatedState(onSwipeClear)
     val currentItem by rememberUpdatedState(item)
+    var showInfo by remember { mutableStateOf(false) }
+    if (showInfo) {
+        DownloadInfoDialog(item = item, onDismiss = { showInfo = false })
+    }
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -1046,10 +1055,10 @@ fun QueueItemRow(
                                         onClick = { onOpenFileLocation(item) },
                                     )
                                     CompactIconButton(
-                                        icon = Icons.FileOpen,
-                                        contentDescription = stringResource(R.string.action_open),
+                                        icon = Icons.Info,
+                                        contentDescription = stringResource(R.string.action_details),
                                         tint = MaterialTheme.colorScheme.primary,
-                                        onClick = { onOpen(item) },
+                                        onClick = { showInfo = true },
                                     )
                                 }
                                 else -> Unit
@@ -1472,6 +1481,111 @@ private fun rememberThrottledSpeedEtaText(item: QueueItem): String? {
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun DownloadInfoDialog(item: QueueItem, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val finishedAt = when {
+        item.downloadFinishedAtMs > 0 -> item.downloadFinishedAtMs
+        !item.filePath.isNullOrBlank() ->
+            runCatching { java.io.File(item.filePath!!).takeIf { it.exists() }?.lastModified() }.getOrNull() ?: 0L
+        else -> 0L
+    }
+    val durationMs = if (item.downloadStartedAtMs > 0 && finishedAt > item.downloadStartedAtMs) {
+        finishedAt - item.downloadStartedAtMs
+    } else 0L
+    val size = when {
+        item.bytesTotal > 0 -> item.bytesTotal
+        item.bytesDone > 0 -> item.bytesDone
+        else -> 0L
+    }
+    val probe by produceState<MediaProbe?>(initialValue = null, item.filePath) {
+        val path = item.filePath
+        value = if (path.isNullOrBlank()) null else withContext(Dispatchers.IO) {
+            runCatching { MediaInfoProbe.probe(path) }.getOrNull()
+        }
+    }
+    val platformLabel = when (item.platform) {
+        com.invictus.xmd.domain.download.MediaPlatform.YOUTUBE -> stringResource(R.string.info_platform_youtube)
+        com.invictus.xmd.domain.download.MediaPlatform.DIRECT -> stringResource(R.string.info_platform_direct)
+    }
+    val fileName = item.fileName?.takeIf { it.isNotBlank() }
+        ?: item.filePath?.let { java.io.File(it).name }
+    val finishedText = if (finishedAt > 0) {
+        val d = Date(finishedAt)
+        val date = android.text.format.DateFormat.getMediumDateFormat(context).format(d)
+        val time = android.text.format.DateFormat.getTimeFormat(context).format(d)
+        "$date \u00b7 $time"
+    } else null
+
+    val rows = listOf(
+        stringResource(R.string.info_file_name) to fileName,
+        stringResource(R.string.info_size) to size.takeIf { it > 0 }?.let { formatBytes(it) },
+        stringResource(R.string.info_media_duration) to probe?.durationMs?.let { formatMediaDuration(it) },
+        stringResource(R.string.info_codec) to probe?.codec,
+        stringResource(R.string.info_quality) to probe?.quality,
+        stringResource(R.string.info_format) to item.mediaFormatLabel?.takeIf { it.isNotBlank() },
+        stringResource(R.string.info_platform) to platformLabel,
+        stringResource(R.string.info_category) to item.category.label,
+        stringResource(R.string.info_path) to item.filePath?.takeIf { it.isNotBlank() },
+        stringResource(R.string.info_source) to item.sourceUrl.takeIf { it.isNotBlank() },
+        stringResource(R.string.info_finished) to finishedText,
+        stringResource(R.string.info_duration) to durationMs.takeIf { it > 500 }?.let { formatElapsedDuration(it) },
+    ).filter { !it.second.isNullOrBlank() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.wideDialogWidth(),
+        properties = WideDialogProperties,
+        shape = RoundedCornerShape(20.dp),
+        title = { Text(stringResource(R.string.action_details)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                rows.forEach { (label, value) ->
+                    Column {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        SelectionContainer {
+                            Text(
+                                text = value.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_dismiss)) }
+        },
+        dismissButton = {
+            item.filePath?.takeIf { it.isNotBlank() }?.let { path ->
+                TextButton(onClick = { clipboardManager.setText(AnnotatedString(path)) }) {
+                    Text(stringResource(R.string.info_copy_path))
+                }
+            }
+        },
+    )
+}
+
+private fun formatMediaDuration(ms: Long): String {
+    val total = ms / 1000
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val sec = total % 60
+    return if (h > 0) String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, sec)
+    else String.format(java.util.Locale.US, "%d:%02d", m, sec)
+}
 
 @Composable
 private fun RenameDialog(currentName: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
