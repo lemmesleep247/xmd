@@ -383,6 +383,19 @@
     <string name="settings_subtitles_default_hint">Starts the Subtitles chip switched on in the Add Download dialog. Every available language is embedded in the video; audio-only downloads are skipped.</string>
     <string name="settings_subtitles_auto">Include auto-generated captions</string>
     <string name="settings_subtitles_auto_hint">Also embeds YouTube\'s automatic captions in the video\'s original language. Off by default.</string>
+    <string name="settings_download_dialog_title">Download dialog</string>
+    <string name="settings_move_sb_subs_advanced">Move SponsorBlock &amp; Subtitles to Advanced</string>
+    <string name="settings_move_sb_subs_advanced_hint">Hides the SponsorBlock and Subtitles toggles from the main Add Download dialog and shows them inside its Advanced section instead.</string>
+    <string name="settings_filter_lists_header">Filter lists</string>
+    <string name="settings_filter_set_easylist_title">EasyList + uBlock</string>
+    <string name="settings_filter_set_easylist_subtitle">EasyList, EasyPrivacy and uBlock filters. Best all-round coverage.</string>
+    <string name="settings_filter_set_adguard_title">AdGuard</string>
+    <string name="settings_filter_set_adguard_subtitle">AdGuard Base, Mobile and Tracking Protection.</string>
+    <string name="settings_filter_set_both_title">Both</string>
+    <string name="settings_filter_set_both_subtitle">Maximum blocking. Uses more memory and may break more sites.</string>
+    <string name="settings_filter_rules_loaded">%1$,d filter rules loaded</string>
+    <string name="settings_filter_rules_loading">Loading filter lists…</string>
+    <string name="settings_filter_update_now">Update filter lists now</string>
     <string name="audio_format_mp3">MP3</string>
     <string name="audio_format_m4a">M4A (AAC)</string>
     <string name="audio_format_opus">Opus</string>
@@ -675,4 +688,27 @@
     <string name="conn_custom_speed">Custom</string>
     <string name="conn_concurrent_title">Simultaneous downloads</string>
     <string name="conn_concurrent_hint">How many downloads run at the same time (1–5).</string>
+    <!-- Status Saver -->
+    <string name="status_saver_title">Status Saver</string>
+    <string name="status_tab_recent">Recent</string>
+    <string name="status_tab_saved">Saved</string>
+    <string name="status_source_whatsapp">WhatsApp</string>
+    <string name="status_source_business">WhatsApp Business</string>
+    <string name="status_empty_recent">No statuses found. Watch a status in WhatsApp first, then come back and refresh.</string>
+    <string name="status_empty_saved">Nothing saved yet. Statuses you save will appear here.</string>
+    <string name="status_permission_title">All-files access required</string>
+    <string name="status_permission_message">Status Saver needs all-files access to read WhatsApp statuses and save them to your device.</string>
+    <string name="status_permission_button">Grant access</string>
+    <string name="status_saved_n">Saved %1$d</string>
+    <string name="status_already_saved">Already saved</string>
+    <string name="status_save_failed">Couldn\'t save the status</string>
+    <string name="status_deleted_n">Deleted %1$d</string>
+    <string name="status_delete_title">Delete saved status?</string>
+    <string name="status_delete_message">%1$d saved status will be deleted from your device.</string>
+    <string name="status_action_save">Save</string>
+    <string name="status_action_delete">Delete</string>
+    <string name="status_select_all">Select all</string>
+    <string name="status_selected_count">%1$d selected</string>
+    <string name="status_close">Close</string>
+    <string name="status_refresh">Refresh</string>
 </resources>
