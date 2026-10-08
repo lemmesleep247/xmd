@@ -110,6 +110,8 @@ class BrowserFragment : Fragment() {
             if (pageUrl != null) triggerPrepareFromPage(url, pageUrl) else triggerPrepare(listOf(url))
         }
         fun onBrowserMenuAction(action: BrowserMenuAction)
+        /** Bottom-bar Downloads button: jump to the Downloads tab. */
+        fun onBrowserOpenDownloads() {}
         /** A stream MediaSniffer picked up was tapped in the "videos found"
          *  sheet. HLS/DASH ([needsPicker] true) routes through the same
          *  quality-picker flow as a YouTube link (resolveYoutube reused
@@ -275,6 +277,13 @@ class BrowserFragment : Fragment() {
     private var toolbarProgress: Int by mutableStateOf(0)
     private var toolbarProgressVisible: Boolean by mutableStateOf(false)
     private var tabsCountValue: Int by mutableStateOf(1)
+    // Bottom nav bar (Back/Forward/Home/Bookmarks/Downloads). bottomBarEnabled
+    // mirrors the user setting (refreshed in onResume); bottomBarScrollVisible
+    // is flipped by WebView scrolling so the bar hides on scroll-down.
+    private var bottomBarEnabled: Boolean by mutableStateOf(true)
+    private var bottomBarScrollVisible: Boolean by mutableStateOf(true)
+    private var navCanGoForward: Boolean by mutableStateOf(false)
+    private var lastBottomBarToggleMs: Long = 0L
 
     private val browserViewModel: BrowserViewModel by viewModels()
 
@@ -429,6 +438,28 @@ class BrowserFragment : Fragment() {
                             progress = toolbarProgress,
                             progressVisible = toolbarProgressVisible,
                         )
+                    },
+                    bottomBar = {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = bottomBarEnabled && !speedDialVisible && !addressBarFocused && bottomBarScrollVisible,
+                            enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                            exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+                        ) {
+                            BrowserBottomBar(
+                                canGoForward = navCanGoForward,
+                                onBack = { onBackPressed() },
+                                onForward = {
+                                    val v = webViewFor(tabs.getOrNull(currentTabIndex))
+                                    if (v != null && v.canGoForward()) {
+                                        showNavLoadingVeil()
+                                        v.goForward()
+                                    }
+                                },
+                                onHome = ::goHome,
+                                onBookmarks = { (activity as? Callbacks)?.onBrowserMenuAction(BrowserMenuAction.Bookmarks) },
+                                onDownloads = { (activity as? Callbacks)?.onBrowserOpenDownloads() },
+                            )
+                        }
                     },
                     onWebViewHostReady = { swipeRefresh, containerView ->
                         webViewSwipeRefresh = swipeRefresh
@@ -828,6 +859,23 @@ class BrowserFragment : Fragment() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(webView: WebView, tab: BrowserTab) {
+        webView.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+            if (!isCurrentTab(tab)) return@setOnScrollChangeListener
+            val dy = scrollY - oldScrollY
+            val now = android.os.SystemClock.uptimeMillis()
+            // The bar resizes the WebView when it toggles, which can echo back
+            // as a small scroll -- ignore scroll events right after a toggle.
+            if (now - lastBottomBarToggleMs < 350L) return@setOnScrollChangeListener
+            val wantVisible = when {
+                scrollY <= 0 || dy < -24 -> true
+                dy > 24 -> false
+                else -> bottomBarScrollVisible
+            }
+            if (wantVisible != bottomBarScrollVisible) {
+                bottomBarScrollVisible = wantVisible
+                lastBottomBarToggleMs = now
+            }
+        }
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.databaseEnabled = true
@@ -954,6 +1002,8 @@ class BrowserFragment : Fragment() {
                     view.evaluateJavascript(BackgroundPlaybackScript.script(), null)
                 }
                 if (isCurrentTab(tab)) {
+                    navCanGoForward = view.canGoForward()
+                    bottomBarScrollVisible = true
                     toolbarProgress = 0
                     toolbarProgressVisible = true
                     addressBarText = url.orEmpty()
@@ -985,6 +1035,7 @@ class BrowserFragment : Fragment() {
                     view.evaluateJavascript(com.invictus.xmd.domain.browser.AdblockFilter.cosmeticHideScript(level, pageHost), null)
                 }
                 if (isCurrentTab(tab)) {
+                    navCanGoForward = view.canGoForward()
                     toolbarProgressVisible = false
                     webViewSwipeRefresh.isRefreshing = false
                     hideNavLoadingVeil()
@@ -1327,11 +1378,14 @@ class BrowserFragment : Fragment() {
                 // Pop-ups the page opens without any user gesture are ad
                 // pop-unders in practice -- refuse them outright.
                 val openerHost = parentUrl?.let { runCatching { android.net.Uri.parse(it).host }.getOrNull() }
-                if (!isUserGesture &&
-                    Settings.adblockLevel() != Settings.AdblockLevel.OFF &&
-                    !Settings.isAdblockAllowlisted(openerHost)
-                ) {
-                    Settings.incrementAdblockLifetimeBlockedCount()
+                // Chrome-style: a tap on a target="_blank" link / window.open
+                // from a real tap opens a new tab; script-only pop-ups never do.
+                if (!isUserGesture) {
+                    if (Settings.adblockLevel() != Settings.AdblockLevel.OFF &&
+                        !Settings.isAdblockAllowlisted(openerHost)
+                    ) {
+                        Settings.incrementAdblockLifetimeBlockedCount()
+                    }
                     return false
                 }
                 val newTab = BrowserTab(
@@ -1339,6 +1393,7 @@ class BrowserFragment : Fragment() {
                     url = null,
                     openedBy = parentTab.id,
                     openedByUrl = parentUrl,
+                    parentTabId = parentTab.id,
                     isDesktopMode = parentTab.isDesktopMode,
                     isPrivate = parentTab.isPrivate,
                 )
@@ -1472,6 +1527,10 @@ class BrowserFragment : Fragment() {
             if (view.canGoBack()) {
                 showNavLoadingVeil()
                 view.goBack()
+            } else if (tab.parentTabId != null && tabs.any { it.id == tab.parentTabId }) {
+                // Chrome: no history left in a tab opened from another tab ->
+                // close it and land back on the tab it came from.
+                closeTab(currentTabIndex)
             } else {
                 resetTabToBlank(tab)
                 showSpeedDial()
@@ -1690,6 +1749,8 @@ class BrowserFragment : Fragment() {
         updateBookmarkStar(tab)
         toolbarProgress = tab.progress
         toolbarProgressVisible = tab.isLoading
+        navCanGoForward = webViewFor(tab)?.canGoForward() == true
+        bottomBarScrollVisible = true
         webViewSwipeRefresh.isRefreshing = false
         val url = tab.url
         if (url != null) checkPageForLinks(url) else clearDetectedLink()
@@ -1709,7 +1770,8 @@ class BrowserFragment : Fragment() {
      *  callers don't need to know about [openUrlInNewTab]'s tab-management
      *  internals. */
     fun openInNewTab(url: String) {
-        openUrlInNewTab(url)
+        // External entry point: not a child of whatever tab happens to be open.
+        openTabFor(url, childOfCurrent = false)
     }
 
     private fun loadUrl(raw: String) {
@@ -1784,6 +1846,7 @@ class BrowserFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        bottomBarEnabled = Settings.browserBottomBarEnabled()
         updateHeaderInteractionState()
         (activity as? Callbacks)?.onBrowserWebpageVisibilityChanged(!speedDialVisible)
     }
@@ -1966,7 +2029,7 @@ class BrowserFragment : Fragment() {
             // previousView = null: closingTab's WebView is already torn
             // down above, so activateTab shouldn't try to crossfade/hide it again.
             closingCurrent -> {
-                val parentIndex = closingTab.openedBy?.let { pid -> tabs.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 }
+                val parentIndex = (closingTab.parentTabId ?: closingTab.openedBy)?.let { pid -> tabs.indexOfFirst { it.id == pid } }?.takeIf { it >= 0 }
                 val targetIndex = parentIndex ?: index.coerceAtMost(tabs.size - 1)
                 activateTab(targetIndex, previousView = null)
             }
@@ -2246,9 +2309,15 @@ class BrowserFragment : Fragment() {
 
     /** Opens [url] in a brand-new background... actually foreground tab,
      *  Chrome-style: the new tab becomes current and is shown immediately. */
-    private fun openUrlInNewTab(url: String) {
+    private fun openUrlInNewTab(url: String) = openTabFor(url, childOfCurrent = true)
+
+    private fun openTabFor(url: String, childOfCurrent: Boolean) {
         val previousView = webViewFor(tabs.getOrNull(currentTabIndex))
-        val newTab = BrowserTab(id = nextTabId++, url = url)
+        val newTab = BrowserTab(
+            id = nextTabId++,
+            url = url,
+            parentTabId = if (childOfCurrent) tabs.getOrNull(currentTabIndex)?.id else null,
+        )
         tabs.add(newTab)
         currentTabIndex = tabs.lastIndex
         showWebView()
@@ -2260,7 +2329,7 @@ class BrowserFragment : Fragment() {
     }
 
     private fun openUrlInBackgroundTab(url: String) {
-        val newTab = BrowserTab(id = nextTabId++, url = url)
+        val newTab = BrowserTab(id = nextTabId++, url = url, parentTabId = tabs.getOrNull(currentTabIndex)?.id)
         val newPosition = (currentTabIndex + 1).coerceIn(0, tabs.size)
         tabs.add(newPosition, newTab)
         val view = ensureWebView(newTab)
