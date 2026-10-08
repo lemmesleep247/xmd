@@ -317,6 +317,8 @@
     <string name="settings_general_header">General</string>
     <string name="settings_playback_header">Playback</string>
     <string name="settings_adblock_title">Ad blocking</string>
+    <string name="settings_share_sheet">Share as bottom sheet</string>
+    <string name="settings_share_sheet_hint">When you share a YouTube or other yt-dlp link to the app, show the download options as a bottom sheet instead of a centered dialog.</string>
     <string name="bg_playback_channel_name">Background playback</string>
     <string name="bg_playback_notification_title">Playing in background</string>
     <string name="bg_playback_notification_text">Tap to return to the browser</string>

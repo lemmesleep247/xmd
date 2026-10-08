@@ -1101,6 +1101,9 @@ private fun YoutubeRoute() {
     var moveSbSubsToAdvanced by remember {
         mutableStateOf(com.invictus.xmd.preferences.Settings.moveSponsorSubsToAdvanced())
     }
+    var shareAsBottomSheet by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.shareReceiverBottomSheet())
+    }
 
     var ytDlpInstalled by remember {
         mutableStateOf(com.invictus.xmd.domain.download.YtDlpManager.isInstalled(context))
@@ -1194,6 +1197,11 @@ private fun YoutubeRoute() {
         onMoveSbSubsToAdvancedChanged = { value ->
             moveSbSubsToAdvanced = value
             com.invictus.xmd.preferences.Settings.setMoveSponsorSubsToAdvanced(value)
+        },
+        shareAsBottomSheet = shareAsBottomSheet,
+        onShareAsBottomSheetChanged = { value ->
+            shareAsBottomSheet = value
+            com.invictus.xmd.preferences.Settings.setShareReceiverBottomSheet(value)
         },
         ytDlpInstalled = ytDlpInstalled,
         ytDlpUsingNightly = ytDlpUsingNightly,
