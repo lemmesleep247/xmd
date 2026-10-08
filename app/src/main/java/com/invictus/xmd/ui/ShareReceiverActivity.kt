@@ -123,6 +123,7 @@ class ShareReceiverActivity : AppCompatActivity() {
             XmdTheme {
                 currentDownloadLink?.let { initialLink ->
                     AddDownloadDialog(
+                        asBottomSheet = com.invictus.xmd.preferences.Settings.shareReceiverBottomSheet(),
                         initialLink = initialLink,
                         initialName = currentInitialName ?: "",
                         defaultSavePath = defaultSavePath(),

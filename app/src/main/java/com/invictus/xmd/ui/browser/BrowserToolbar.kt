@@ -105,6 +105,7 @@ fun BrowserToolbarRow(
     bookmarkFilled: Boolean,
     onBookmarkTap: () -> Unit,
     onHomeTap: () -> Unit,
+    homeVisible: Boolean = true,
     onNewTabTap: () -> Unit,
     onTabsTap: () -> Unit,
     tabsCount: Int,
@@ -130,15 +131,24 @@ fun BrowserToolbarRow(
                     .padding(horizontal = 6.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ToolbarIconButton(
-                    icon = Icons.Home,
-                    contentDescription = stringResource(R.string.action_home),
-                    onClick = onHomeTap,
-                )
+                if (homeVisible) {
+                    ToolbarIconButton(
+                        icon = Icons.Home,
+                        contentDescription = stringResource(R.string.action_home),
+                        onClick = onHomeTap,
+                    )
+                } else if (!addressBarFocused) {
+                    // Bottom bar has Home, so New tab takes the leftmost slot.
+                    ToolbarIconButton(
+                        icon = Icons.Add,
+                        contentDescription = stringResource(R.string.action_new_tab),
+                        onClick = onNewTabTap,
+                    )
+                }
                 AddressPill(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 6.dp),
+                        .padding(start = if (homeVisible || !addressBarFocused) 6.dp else 0.dp),
                     text = addressText,
                     onTextChange = onAddressTextChange,
                     onFocusChange = onAddressFocusChange,
@@ -151,12 +161,14 @@ fun BrowserToolbarRow(
                     onBookmarkTap = onBookmarkTap,
                 )
                 if (!addressBarFocused) {
-                    ToolbarIconButton(
-                        icon = Icons.Add,
-                        contentDescription = stringResource(R.string.action_new_tab),
-                        onClick = onNewTabTap,
-                        modifier = Modifier.padding(start = 2.dp),
-                    )
+                    if (homeVisible) {
+                        ToolbarIconButton(
+                            icon = Icons.Add,
+                            contentDescription = stringResource(R.string.action_new_tab),
+                            onClick = onNewTabTap,
+                            modifier = Modifier.padding(start = 2.dp),
+                        )
+                    }
                     TabsButton(
                         count = tabsCount,
                         contentDescription = stringResource(R.string.action_tabs),

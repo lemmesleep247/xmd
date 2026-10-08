@@ -134,6 +134,31 @@ class BrowserFragment : Fragment() {
          *  Chrome-style: a handful of your own visited pages, not a full list,
          *  since the remaining rows are Google's live search suggestions. */
         private const val MAX_HISTORY_SUGGESTIONS = 5
+        /** Reports any <video> that fails to play (codec/format the WebView can't
+         *  handle) to [VideoBridge] so the in-app player can take over. */
+        private const val VIDEO_ERROR_SCRIPT =
+            "(function(){if(window.__xmdVidErr)return;window.__xmdVidErr=true;" +
+                "document.addEventListener('error',function(e){var t=e.target;" +
+                "if(!t||(t.tagName!=='VIDEO'&&t.tagName!=='SOURCE'))return;" +
+                "var v=t.tagName==='VIDEO'?t:t.parentElement;" +
+                "var src=(v&&(v.currentSrc||v.src))||t.src||'';" +
+                "try{XmdVideo.onVideoError(src);}catch(x){}},true);})();"
+
+        /** Desktop-site extras beyond the UA string: many sites decide layout
+         *  from navigator.userAgentData (stays "mobile" in WebView) or from a
+         *  width=device-width viewport meta, so they ignored the UA switch. */
+        private const val DESKTOP_MODE_SCRIPT =
+            "(function(){try{Object.defineProperty(navigator,'userAgentData',{get:function(){" +
+                "return {mobile:false,platform:'Linux'," +
+                "brands:[{brand:'Chromium',version:'120'},{brand:'Google Chrome',version:'120'}]," +
+                "getHighEntropyValues:function(){return Promise.resolve({platform:'Linux',mobile:false});}," +
+                "toJSON:function(){return {mobile:false,platform:'Linux'};}};}});}catch(e){}" +
+                "function fix(){var h=document.head||document.documentElement;if(!h)return;" +
+                "var m=document.querySelector('meta[name=viewport]');" +
+                "if(!m){m=document.createElement('meta');m.name='viewport';h.appendChild(m);}" +
+                "m.setAttribute('content','width=1024');}" +
+                "fix();document.addEventListener('DOMContentLoaded',fix);})();"
+
         private const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/120.0.0.0 Safari/537.36"
@@ -280,6 +305,7 @@ class BrowserFragment : Fragment() {
     // Bottom nav bar (Back/Forward/Home/Bookmarks/Downloads). bottomBarEnabled
     // mirrors the user setting (refreshed in onResume); bottomBarScrollVisible
     // is flipped by WebView scrolling so the bar hides on scroll-down.
+    private var inAppPlayerRequest: InAppPlayRequest? by mutableStateOf(null)
     private var bottomBarEnabled: Boolean by mutableStateOf(true)
     private var bottomBarScrollVisible: Boolean by mutableStateOf(true)
     private var navCanGoForward: Boolean by mutableStateOf(false)
@@ -411,6 +437,8 @@ class BrowserFragment : Fragment() {
                             bookmarkFilled = bookmarkStarFilled,
                             onBookmarkTap = ::onBookmarkStarTapped,
                             onHomeTap = ::goHome,
+                            // The bottom bar already has Home, so drop the duplicate up here.
+                            homeVisible = !bottomBarEnabled,
                             onNewTabTap = ::addNewTab,
                             onTabsTap = ::showTabsOverlay,
                             tabsCount = tabsCountValue,
@@ -539,6 +567,19 @@ class BrowserFragment : Fragment() {
                         )
                     },
                     dialogs = {
+                        inAppPlayerRequest?.let { request ->
+                            InAppVideoPlayerDialog(
+                                request = request,
+                                userAgent = webViewFor(tabs.getOrNull(currentTabIndex))?.settings?.userAgentString,
+                                onOpenExternal = {
+                                    com.invictus.xmd.utils.media.MediaPlaybackUtils.openMediaInExternalPlayer(
+                                        context = requireContext(),
+                                        url = request.url,
+                                    )
+                                },
+                                onDismiss = { inAppPlayerRequest = null },
+                            )
+                        }
                         sniffedSheetStreams?.let { streams ->
                             SniffedMediaSheet(
                                 streams = streams,
@@ -550,11 +591,19 @@ class BrowserFragment : Fragment() {
                                 },
                                 onCopyLink = ::copyLinkToClipboard,
                                 onPlayClick = { stream ->
-                                    com.invictus.xmd.utils.media.MediaPlaybackUtils.openMediaInExternalPlayer(
-                                        context = requireContext(),
-                                        url = stream.url,
-                                        isAudioOnly = stream.kind == com.invictus.xmd.domain.browser.MediaSniffer.Kind.DIRECT_AUDIO,
-                                    )
+                                    val currentPage = tabs.getOrNull(currentTabIndex)?.url
+                                    if (stream.kind == com.invictus.xmd.domain.browser.MediaSniffer.Kind.DASH ||
+                                        com.invictus.xmd.utils.LinkParser.isYoutubeLink(stream.url)
+                                    ) {
+                                        // VideoView can't do DASH; YouTube has its own player.
+                                        com.invictus.xmd.utils.media.MediaPlaybackUtils.openMediaInExternalPlayer(
+                                            context = requireContext(),
+                                            url = stream.url,
+                                            isAudioOnly = false,
+                                        )
+                                    } else {
+                                        inAppPlayerRequest = InAppPlayRequest(stream.url, currentPage)
+                                    }
                                 },
                                 onDismiss = { sniffedSheetStreams = null },
                             )
@@ -707,6 +756,10 @@ class BrowserFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         CookieManager.getInstance().flush()
+        // Keep the process alive so page audio/video continues in background.
+        if (Settings.backgroundPlaybackEnabled() && !speedDialVisible && activity?.isChangingConfigurations != true) {
+            com.invictus.xmd.service.BackgroundPlaybackService.start(requireContext().applicationContext)
+        }
     }
 
     override fun onDestroyView() {
@@ -807,7 +860,14 @@ class BrowserFragment : Fragment() {
     private fun ensureWebView(tab: BrowserTab): WebView {
         webViews[tab.id]?.let { touchLru(tab.id); return it }
 
-        val wv = WebView(requireContext()).apply {
+        val wv = object : WebView(requireContext()) {
+            // With Background playback on, never tell Chromium the window was
+            // hidden -- that is what pauses media when the app is minimized.
+            override fun onWindowVisibilityChanged(visibility: Int) {
+                if (visibility != View.VISIBLE && Settings.backgroundPlaybackEnabled()) return
+                super.onWindowVisibilityChanged(visibility)
+            }
+        }.apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             )
@@ -916,6 +976,7 @@ class BrowserFragment : Fragment() {
         // Prefer a true document-start script (runs before any page JS, in
         // every frame); older WebViews fall back to onPageStarted injection.
         webView.addJavascriptInterface(AdblockBridge(), "XmdAdblock")
+        webView.addJavascriptInterface(VideoBridge(tab), "XmdVideo")
         val adblockDocStart = runCatching {
             if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
@@ -985,6 +1046,8 @@ class BrowserFragment : Fragment() {
                 tab.isLoading = true
                 tab.progress = 0
                 tab.sniffedMedia.clear()
+                view.evaluateJavascript(VIDEO_ERROR_SCRIPT, null)
+                if (tab.isDesktopMode) view.evaluateJavascript(DESKTOP_MODE_SCRIPT, null)
                 if (!adblockDocStart && Settings.adblockLevel() != Settings.AdblockLevel.OFF) {
                     view.evaluateJavascript(com.invictus.xmd.domain.browser.AdblockScripts.documentStart(), null)
                 }
@@ -1015,6 +1078,8 @@ class BrowserFragment : Fragment() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 tab.isLoading = false
+                view.evaluateJavascript(VIDEO_ERROR_SCRIPT, null)
+                if (tab.isDesktopMode) view.evaluateJavascript(DESKTOP_MODE_SCRIPT, null)
                 val title = view.title?.takeIf { t -> t.isNotBlank() } ?: url.orEmpty()
                 tab.url = url
                 tab.title = title
@@ -1415,6 +1480,31 @@ class BrowserFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /** Receives <video> error reports from [VIDEO_ERROR_SCRIPT]. */
+    private inner class VideoBridge(private val tab: BrowserTab) {
+        @android.webkit.JavascriptInterface
+        fun onVideoError(src: String?) {
+            view?.post { handleWebVideoError(tab, src) }
+        }
+    }
+
+    /** A page video failed in the WebView: play it in the in-app player
+     *  instead (YouTube is left alone -- its own player/embed handles it). */
+    private fun handleWebVideoError(tab: BrowserTab, src: String?) {
+        if (!isAdded || !isCurrentTab(tab) || inAppPlayerRequest != null) return
+        val pageUrl = tab.url
+        if (pageUrl != null && com.invictus.xmd.utils.LinkParser.isYoutubeLink(pageUrl)) return
+        val candidate = src?.takeIf { it.startsWith("http", ignoreCase = true) }
+            ?: synchronized(tab.sniffedMedia) {
+                tab.sniffedMedia.values.firstOrNull {
+                    it.kind == com.invictus.xmd.domain.browser.MediaSniffer.Kind.DIRECT_VIDEO ||
+                        it.kind == com.invictus.xmd.domain.browser.MediaSniffer.Kind.HLS
+                }?.url
+            }
+            ?: return
+        inAppPlayerRequest = InAppPlayRequest(candidate, pageUrl)
     }
 
     /** Bridge the document-start script talks to (popup guard + YouTube pruning). */
@@ -1847,6 +1937,7 @@ class BrowserFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         bottomBarEnabled = Settings.browserBottomBarEnabled()
+        com.invictus.xmd.service.BackgroundPlaybackService.stop(requireContext().applicationContext)
         updateHeaderInteractionState()
         (activity as? Callbacks)?.onBrowserWebpageVisibilityChanged(!speedDialVisible)
     }
@@ -1906,10 +1997,24 @@ class BrowserFragment : Fragment() {
      *  that branch's onConfirm lambda -- this function now only computes
      *  the prefill. */
     private fun showAddBookmarkDialog(prefillUrl: String?, prefillTitle: String? = null) {
-        addBookmarkDialogState = AddBookmarkDialogState(
-            prefillUrl = prefillUrl ?: tabs.getOrNull(currentTabIndex)?.url,
-            prefillTitle = prefillTitle,
-        )
+        val tab = tabs.getOrNull(currentTabIndex)
+        val url = prefillUrl ?: tab?.url
+        // Page titles are usually SEO-long ("Site - Bollywood, Hollywood & ...");
+        // default to just the short title. Explicit prefills (e.g. link text) stay as-is.
+        val title = if (prefillTitle == null || prefillTitle == tab?.title) {
+            shortBookmarkTitle(prefillTitle ?: tab?.title, url)
+        } else {
+            prefillTitle
+        }
+        addBookmarkDialogState = AddBookmarkDialogState(prefillUrl = url, prefillTitle = title)
+    }
+
+    private fun shortBookmarkTitle(raw: String?, url: String?): String? {
+        val full = raw?.trim().orEmpty()
+        val first = full.split(Regex("\\s+[-\u2013\u2014|:\u2022]\\s+"), limit = 2).first().trim()
+        val short = first.ifBlank { full }.take(40).trim()
+        if (short.isNotBlank()) return short
+        return url?.let { runCatching { android.net.Uri.parse(it).host?.removePrefix("www.") }.getOrNull() }
     }
 
     // ── Tabs ─────────────────────────────────────────────────────────────
@@ -2237,9 +2342,9 @@ class BrowserFragment : Fragment() {
         applyDesktopMode(webView, tab.isDesktopMode)
         val currentUrl = webView.url ?: tab.url
         if (currentUrl != null) {
-            webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            webView.loadUrl(currentUrl)
-            webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
+            // Header (not cacheMode) so a fresh request is guaranteed: the old
+            // cacheMode flip was reset before the navigation actually started.
+            webView.loadUrl(currentUrl, mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"))
         } else {
             webView.reload()
         }

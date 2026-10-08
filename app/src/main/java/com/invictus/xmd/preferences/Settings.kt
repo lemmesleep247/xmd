@@ -451,7 +451,7 @@ object Settings {
 
     // ── Browser: Bottom navigation bar (Back/Forward/Home/Bookmarks/Downloads) ──
     fun browserBottomBarEnabled(): Boolean =
-        prefs.getBoolean(KEY_BROWSER_BOTTOM_BAR_ENABLED, true)
+        prefs.getBoolean(KEY_BROWSER_BOTTOM_BAR_ENABLED, false)
     fun setBrowserBottomBarEnabled(value: Boolean) {
         prefs.edit().putBoolean(KEY_BROWSER_BOTTOM_BAR_ENABLED, value).apply()
     }
@@ -807,6 +807,7 @@ object Settings {
     private const val KEY_SUBS_DEFAULT_ON = "yt_subtitles_default_on"
     private const val KEY_SUBS_AUTO = "yt_subtitles_auto_captions"
     private const val KEY_MOVE_SB_SUBS_ADV = "yt_move_sb_subs_to_advanced"
+    private const val KEY_SHARE_RECEIVER_SHEET = "share_receiver_bottom_sheet"
 
     fun sponsorBlockDefaultOn(): Boolean = prefs.getBoolean(KEY_SB_DEFAULT_ON, false)
     fun setSponsorBlockDefaultOn(value: Boolean) {
@@ -857,6 +858,12 @@ object Settings {
     /** When on, the SponsorBlock + Subtitles toggles leave the Add Download
      *  dialog's main body and live under its Advanced section. Off by default. */
     fun moveSponsorSubsToAdvanced(): Boolean = prefs.getBoolean(KEY_MOVE_SB_SUBS_ADV, false)
+
+    /** Share-sheet download dialog for yt-dlp links shown as a bottom sheet instead of a centered dialog. */
+    fun shareReceiverBottomSheet(): Boolean = prefs.getBoolean(KEY_SHARE_RECEIVER_SHEET, false)
+    fun setShareReceiverBottomSheet(value: Boolean) {
+        prefs.edit().putBoolean(KEY_SHARE_RECEIVER_SHEET, value).apply()
+    }
     fun setMoveSponsorSubsToAdvanced(value: Boolean) {
         prefs.edit().putBoolean(KEY_MOVE_SB_SUBS_ADV, value).apply()
     }

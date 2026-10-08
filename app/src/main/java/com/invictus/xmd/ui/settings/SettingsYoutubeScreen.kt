@@ -101,6 +101,8 @@ fun SettingsYoutubeScreen(
     // Add Download dialog layout
     moveSbSubsToAdvanced: Boolean,
     onMoveSbSubsToAdvancedChanged: (Boolean) -> Unit,
+    shareAsBottomSheet: Boolean,
+    onShareAsBottomSheetChanged: (Boolean) -> Unit,
     // yt-dlp engine
     ytDlpInstalled: Boolean,
     ytDlpUsingNightly: Boolean,
@@ -386,6 +388,13 @@ fun SettingsYoutubeScreen(
                     subtitle = stringResource(R.string.settings_move_sb_subs_advanced_hint),
                     checked = moveSbSubsToAdvanced,
                     onCheckedChange = onMoveSbSubsToAdvancedChanged,
+                )
+                SettingsDivider()
+                SwitchSettingRow(
+                    title = stringResource(R.string.settings_share_sheet),
+                    subtitle = stringResource(R.string.settings_share_sheet_hint),
+                    checked = shareAsBottomSheet,
+                    onCheckedChange = onShareAsBottomSheetChanged,
                 )
             }
         }

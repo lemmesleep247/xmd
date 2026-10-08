@@ -6,6 +6,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -142,6 +145,8 @@ fun AddDownloadDialog(
      *  no sense. Manual "Add download" entry points (FAB, retry, share
      *  intent) keep the default true. */
     allowPickTorrentFile: Boolean = true,
+    /** Share receiver only: render as a bottom sheet (yt-dlp links) instead of a centered dialog. */
+    asBottomSheet: Boolean = false,
     onCopyLink: (String) -> Unit,
     onPasteRequest: () -> String?,
     onChangeSaveDir: (onPicked: (String) -> Unit) -> Unit,
@@ -456,10 +461,9 @@ fun AddDownloadDialog(
         }
     }
 
-    AlertDialog(
+    DialogOrBottomSheet(
+        asBottomSheet = asBottomSheet && needsYtDlp,
         onDismissRequest = onDismiss,
-        modifier = Modifier.wideDialogWidth(),
-        properties = WideDialogProperties,
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1592,3 +1596,58 @@ private fun formatSpeedLimit(kbps: Int): String {
     }
 }
 
+
+
+/**
+ * Same slots as AlertDialog, rendered either as the usual centered dialog or
+ * as a Material bottom sheet (title, scrollable content, buttons at the end).
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DialogOrBottomSheet(
+    asBottomSheet: Boolean,
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit,
+) {
+    if (!asBottomSheet) {
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            modifier = Modifier.wideDialogWidth(),
+            properties = WideDialogProperties,
+            title = title,
+            text = text,
+            confirmButton = confirmButton,
+            dismissButton = dismissButton,
+        )
+        return
+    }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 12.dp),
+        ) {
+            ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.weight(1f, fill = false)) { text() }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                dismissButton()
+                confirmButton()
+            }
+        }
+    }
+}
