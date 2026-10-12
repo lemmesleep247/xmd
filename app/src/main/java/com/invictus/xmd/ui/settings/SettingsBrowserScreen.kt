@@ -52,8 +52,12 @@ fun SettingsBrowserScreen(
     onOpenAdblock: () -> Unit,
     backgroundPlaybackEnabled: Boolean,
     onBackgroundPlaybackChanged: (Boolean) -> Unit,
+    toolbarBottom: Boolean,
+    onToolbarBottomChanged: (Boolean) -> Unit,
     bottomBarEnabled: Boolean,
     onBottomBarChanged: (Boolean) -> Unit,
+    navButtonsEnabled: Boolean,
+    onNavButtonsChanged: (Boolean) -> Unit,
     onImportWebsites: () -> Unit,
     onExportWebsites: () -> Unit,
 ) {
@@ -99,10 +103,24 @@ fun SettingsBrowserScreen(
             )
             SettingsDivider()
             SwitchSettingRow(
+                title = stringResource(R.string.settings_toolbar_bottom),
+                subtitle = stringResource(R.string.settings_toolbar_bottom_hint),
+                checked = toolbarBottom,
+                onCheckedChange = onToolbarBottomChanged,
+            )
+            SettingsDivider()
+            SwitchSettingRow(
                 title = stringResource(R.string.settings_bottom_bar),
                 subtitle = stringResource(R.string.settings_bottom_bar_hint),
                 checked = bottomBarEnabled,
                 onCheckedChange = onBottomBarChanged,
+            )
+            SettingsDivider()
+            SwitchSettingRow(
+                title = stringResource(R.string.settings_nav_buttons),
+                subtitle = stringResource(R.string.settings_nav_buttons_hint),
+                checked = navButtonsEnabled,
+                onCheckedChange = onNavButtonsChanged,
             )
             SettingsDivider()
             SwitchSettingRow(

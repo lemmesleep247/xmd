@@ -96,6 +96,11 @@
     <string name="delete_downloads_message">Remove %1$d downloads from the queue?</string>
     <string name="delete_file_from_device">Also delete file from device</string>
     <string name="delete_files_from_device">Also delete files from device</string>
+    <string name="cancel_download_title">Cancel this download?</string>
+    <string name="cancel_download_message">Are you sure you want to cancel this download? Downloaded progress will be lost.</string>
+    <string name="cancel_downloads_title">Cancel all downloads?</string>
+    <string name="cancel_downloads_message">Are you sure you want to cancel %1$d active download(s)? Downloaded progress will be lost.</string>
+    <string name="action_keep_downloading">Keep downloading</string>
 
     <!-- Downloads -->
     <string name="empty_queue">Paste some links above and tap Prepare.</string>
@@ -324,8 +329,12 @@
     <string name="bg_playback_notification_text">Tap to return to the browser</string>
     <string name="inapp_player_error">This video can\'t be played here.</string>
     <string name="inapp_player_open_external">Open in another player</string>
+    <string name="settings_toolbar_bottom">Bottom address bar</string>
+    <string name="settings_toolbar_bottom_hint">Move the address bar and controls to the bottom of the screen.</string>
     <string name="settings_bottom_bar">Bottom navigation bar</string>
     <string name="settings_bottom_bar_hint">Back, forward, home, bookmarks and downloads at the bottom while a page is open. Hides when you scroll down.</string>
+    <string name="settings_nav_buttons">Back/Forward buttons</string>
+    <string name="settings_nav_buttons_hint">Show back and forward buttons in the address bar. Off by default.</string>
     <string name="browser_bottom_back">Back</string>
     <string name="browser_bottom_forward">Forward</string>
     <string name="browser_bottom_home">Home</string>
@@ -662,6 +671,10 @@
     <string name="download_dialog_open_in_browser">Open in Browser</string>
     <string name="download_dialog_download_anyway">Download anyway</string>
     <string name="download_dialog_advanced_streams_title">Available Streams</string>
+    <string name="download_dialog_quality_checking">Checking which qualities this video really has…</string>
+    <string name="download_dialog_quality_unverified">Couldn\'t check this video\'s qualities — showing the default list.</string>
+    <string name="download_dialog_quality_available">%1$d qualities available</string>
+    <string name="download_dialog_quality_size">%1$s · %2$s</string>
     <string name="download_dialog_advanced_streams_probing">Probing available streams…</string>
     <string name="download_dialog_advanced_streams_empty">No extra streams found</string>
 

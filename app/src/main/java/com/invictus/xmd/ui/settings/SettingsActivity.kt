@@ -875,8 +875,14 @@ private fun BrowserRoute(
     var backgroundPlaybackEnabled by remember {
         mutableStateOf(com.invictus.xmd.preferences.Settings.backgroundPlaybackEnabled())
     }
+    var toolbarBottom by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.browserToolbarBottom())
+    }
     var bottomBarEnabled by remember {
         mutableStateOf(com.invictus.xmd.preferences.Settings.browserBottomBarEnabled())
+    }
+    var navButtonsEnabled by remember {
+        mutableStateOf(com.invictus.xmd.preferences.Settings.browserNavButtonsEnabled())
     }
     if (showSearchEngineDialog) {
         SearchEngineDialog(
@@ -934,10 +940,20 @@ private fun BrowserRoute(
             backgroundPlaybackEnabled = checked
             com.invictus.xmd.preferences.Settings.setBackgroundPlaybackEnabled(checked)
         },
+        toolbarBottom = toolbarBottom,
+        onToolbarBottomChanged = { checked ->
+            toolbarBottom = checked
+            com.invictus.xmd.preferences.Settings.setBrowserToolbarBottom(checked)
+        },
         bottomBarEnabled = bottomBarEnabled,
         onBottomBarChanged = { checked ->
             bottomBarEnabled = checked
             com.invictus.xmd.preferences.Settings.setBrowserBottomBarEnabled(checked)
+        },
+        navButtonsEnabled = navButtonsEnabled,
+        onNavButtonsChanged = { checked ->
+            navButtonsEnabled = checked
+            com.invictus.xmd.preferences.Settings.setBrowserNavButtonsEnabled(checked)
         },
         onImportWebsites = onImportWebsites,
         onExportWebsites = onExportWebsites,
