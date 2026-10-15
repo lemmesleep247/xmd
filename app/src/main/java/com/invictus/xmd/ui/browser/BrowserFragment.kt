@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -128,6 +129,8 @@ class BrowserFragment : Fragment() {
     }
 
     companion object {
+        /** How long playback must stay stopped, in the background, before the notification goes. */
+        private const val MEDIA_STOP_GRACE_MS = 8_000L
         /** Max WebView instances kept alive across all tabs at once. Beyond
          *  this, the least-recently-used *non-current* tab's WebView is
          *  torn down (state saved first) to keep memory bounded, same
@@ -471,7 +474,8 @@ class BrowserFragment : Fragment() {
                             onTabsTap = ::showTabsOverlay,
                             tabsCount = tabsCountValue,
                             onDownloadsTap = { (activity as? Callbacks)?.onBrowserOpenDownloads() },
-                            downloadsVisible = !speedDialVisible,
+                            // The bottom bar already has Downloads, so drop the duplicate up here (same rule as Home).
+                            downloadsVisible = !speedDialVisible && (toolbarBottom || !bottomBarEnabled),
                             onOverflowTap = { browserMenuExpanded = true },
                             overflowMenu = {
                                 BrowserOverflowMenu(
@@ -546,6 +550,11 @@ class BrowserFragment : Fragment() {
                             onOpenUrl = { shortcut ->
                                 addressBarText = shortcut.url
                                 loadUrl(shortcut.url)
+                                // After loadUrl (which clears it): watch this load for a domain redirect.
+                                tabs.getOrNull(currentTabIndex)?.let {
+                                    it.pendingShortcutId = shortcut.id
+                                    it.pendingShortcutAtMs = System.currentTimeMillis()
+                                }
                             },
                             onPickIcon = { pickIconLauncher.launch("image/*") },
                             bottomPadding = if (toolbarBottom) 16.dp else 96.dp,
@@ -803,13 +812,63 @@ class BrowserFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         CookieManager.getInstance().flush()
-        // Keep the process alive so page audio/video continues in background.
-        if (Settings.backgroundPlaybackEnabled() && !speedDialVisible && activity?.isChangingConfigurations != true) {
+        // Keep the process alive so page audio/video continues in background -- but only when
+        // something is actually playing, so an idle browser leaves no "background play" notification.
+        if (Settings.backgroundPlaybackEnabled() && !speedDialVisible &&
+            activity?.isChangingConfigurations != true && mediaPlayingCached
+        ) {
             com.invictus.xmd.service.BackgroundPlaybackService.start(requireContext().applicationContext)
+            bgServiceActive = true
         }
     }
 
+    // ── Background playback: only while media is really playing ──────────────
+    // Pages report audible playback through [MediaBridge] (see BackgroundPlaybackScript), so nothing
+    // polls: work only happens when a page's media starts or stops.
+
+    private val playingTabs = java.util.concurrent.ConcurrentHashMap<Long, Boolean>()
+
+    /** Read synchronously in onPause: a foreground service must start while the app is still visible. */
+    @Volatile private var mediaPlayingCached = false
+    private var bgServiceActive = false
+    private var bgStopJob: Job? = null
+
+    private inner class MediaBridge(private val tabId: Long) {
+        @JavascriptInterface
+        fun setPlaying(playing: Boolean) {
+            // Called on a WebView thread.
+            view?.post { onMediaState(tabId, playing) }
+        }
+    }
+
+    private fun onMediaState(tabId: Long, playing: Boolean) {
+        if (playing) playingTabs[tabId] = true else playingTabs.remove(tabId)
+        mediaPlayingCached = playingTabs.isNotEmpty()
+        if (!bgServiceActive || view == null) return
+        bgStopJob?.cancel()
+        bgStopJob = null
+        if (mediaPlayingCached) return
+        // In the background and playback ended: drop the notification after a short grace period,
+        // so a track change or buffering gap does not flash it off and on.
+        val appContext = context?.applicationContext ?: return
+        bgStopJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(MEDIA_STOP_GRACE_MS)
+            com.invictus.xmd.service.BackgroundPlaybackService.stop(appContext)
+            bgServiceActive = false
+        }
+    }
+
+    private fun clearBackgroundPlaybackState() {
+        bgStopJob?.cancel()
+        bgStopJob = null
+        bgServiceActive = false
+    }
+
     override fun onDestroyView() {
+        clearBackgroundPlaybackState()
+        playingTabs.clear()
+        mediaPlayingCached = false
+        com.invictus.xmd.service.BackgroundPlaybackService.stop(requireContext().applicationContext)
         suggestJob?.cancel()
         tabs.toList().forEach(::destroyTabWebView)
         tabThumbnails.values.forEach { it.recycle() }
@@ -933,6 +992,8 @@ class BrowserFragment : Fragment() {
      *  visit can restore instantly instead of reloading from the network. */
     private fun destroyTabWebView(tab: BrowserTab) {
         tabAccessOrder.remove(tab.id)
+        playingTabs.remove(tab.id)
+        mediaPlayingCached = playingTabs.isNotEmpty()
         val wv = webViews[tab.id] ?: return
         if (!tab.isPrivate) {
             val bundle = android.os.Bundle()
@@ -966,6 +1027,7 @@ class BrowserFragment : Fragment() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(webView: WebView, tab: BrowserTab) {
+        webView.addJavascriptInterface(MediaBridge(tab.id), "XmdMedia")
         webView.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             if (!isCurrentTab(tab)) return@setOnScrollChangeListener
             val dy = scrollY - oldScrollY
@@ -1108,6 +1170,7 @@ class BrowserFragment : Fragment() {
                 // before the new page's own scripts read document.hidden or
                 // attach their own visibilitychange listener. See
                 // BackgroundPlaybackScript's doc comment.
+                onMediaState(tab.id, false) // a new page starts silent
                 if (Settings.backgroundPlaybackEnabled()) {
                     view.evaluateJavascript(BackgroundPlaybackScript.script(), null)
                 }
@@ -1131,6 +1194,7 @@ class BrowserFragment : Fragment() {
                 val title = view.title?.takeIf { t -> t.isNotBlank() } ?: url.orEmpty()
                 tab.url = url
                 tab.title = title
+                maybeUpdateShortcutAfterRedirect(tab, url)
                 if (!tab.isPrivate && !url.isNullOrBlank() && url.startsWith("http")) {
                     HistoryRepository.record(url, title)
                 }
@@ -1193,6 +1257,7 @@ class BrowserFragment : Fragment() {
                 val uri = request.url
                 val scheme = uri.scheme?.lowercase()
                 if (scheme == "http" || scheme == "https") {
+                    if (request.isForMainFrame && request.hasGesture()) tab.pendingShortcutId = null
                     // Popup tabs opened onto ad pages, and script-driven redirects
                     // (no user gesture) into ad hosts, are refused here.
                     if (request.isForMainFrame && (tab.openedBy != null || !request.hasGesture())) {
@@ -1939,11 +2004,39 @@ class BrowserFragment : Fragment() {
         openTabFor(url, childOfCurrent = false)
     }
 
+    /**
+     * Tile opened from the speed dial whose old domain now redirects to a new
+     * one (hdhub4u-style moves): re-point the tile at the new URL. Watches for
+     * up to 20s (JS redirects land after the first page finishes) and stops at
+     * the first different host or on any user-initiated navigation.
+     */
+    private fun maybeUpdateShortcutAfterRedirect(tab: BrowserTab, finalUrl: String?) {
+        val id = tab.pendingShortcutId ?: return
+        if (tab.isPrivate || finalUrl.isNullOrBlank() || !finalUrl.startsWith("http")) return
+        if (System.currentTimeMillis() - tab.pendingShortcutAtMs > 20_000L) {
+            tab.pendingShortcutId = null
+            return
+        }
+        val title = tab.title
+        viewLifecycleOwner.lifecycleScope.launch {
+            val saved = ShortcutRepository.allShortcuts().firstOrNull { it.id == id } ?: return@launch
+            val newUrl = com.invictus.xmd.domain.browser.ShortcutRedirectUpdater
+                .newUrlFor(saved.url, saved.title.ifBlank { title }, finalUrl) ?: return@launch
+            tab.pendingShortcutId = null
+            ShortcutRepository.updateAll(listOf(saved.copy(url = newUrl)))
+            Settings.markShortcutRedirected(id)
+            android.widget.Toast.makeText(
+                requireContext(), "${saved.title}: link updated", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     private fun loadUrl(raw: String) {
         val input = raw.trim()
         if (input.isEmpty()) return
         val url = normalizeToUrl(input)
         val tab = tabs.getOrNull(currentTabIndex) ?: return
+        tab.pendingShortcutId = null
 
         hideSuggestions()
         showWebView()
@@ -2018,6 +2111,7 @@ class BrowserFragment : Fragment() {
         val currentWebView = if (currentTab != null) webViewFor(currentTab) else null
         navCanGoBack = !speedDialVisible && currentWebView?.canGoBack() == true
         navCanGoForward = !speedDialVisible && currentWebView?.canGoForward() == true
+        clearBackgroundPlaybackState()
         com.invictus.xmd.service.BackgroundPlaybackService.stop(requireContext().applicationContext)
         updateHeaderInteractionState()
         (activity as? Callbacks)?.onBrowserWebpageVisibilityChanged(!speedDialVisible)
